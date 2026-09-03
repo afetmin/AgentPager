@@ -45,8 +45,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -75,7 +73,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
 import com.agentgrid.mobile.AgentGridUiState
-import com.agentgrid.mobile.ScreenBrightnessPolicy
 import com.agentgrid.mobile.SoundEngine
 import com.agentgrid.mobile.TaskSoundTracker
 import com.agentgrid.mobile.domain.AgentActivity
@@ -92,7 +89,6 @@ import com.agentgrid.mobile.network.LinkState
 import com.agentgrid.mobile.render.PixelCoreSurfaceView
 import com.agentgrid.mobile.render.PixelRenderState
 import kotlinx.coroutines.delay
-import kotlin.math.roundToInt
 
 private val EaseOutQuart = CubicBezierEasing(0.25f, 1f, 0.5f, 1f)
 private val TaskListAnchorHeight = 1.dp
@@ -135,7 +131,6 @@ fun AgentGridScreen(
     onControl: (String, ControlAction, String?) -> Unit,
     onFocus: (String) -> Unit,
     onToggleDashboard: () -> Unit,
-    onActiveTaskBrightnessChange: (Float) -> Unit,
     onExitTerminal: () -> Unit,
 ) {
     AgentGridTheme {
@@ -169,7 +164,6 @@ fun AgentGridScreen(
                     onControl = onControl,
                     onFocus = onFocus,
                     onToggleDashboard = onToggleDashboard,
-                    onActiveTaskBrightnessChange = onActiveTaskBrightnessChange,
                     onExitTerminal = onExitTerminal,
                 )
             }
@@ -270,7 +264,6 @@ private fun TaskTerminal(
     onControl: (String, ControlAction, String?) -> Unit,
     onFocus: (String) -> Unit,
     onToggleDashboard: () -> Unit,
-    onActiveTaskBrightnessChange: (Float) -> Unit,
     onExitTerminal: () -> Unit,
 ) {
     val projection = state.taskProjection
@@ -443,7 +436,6 @@ private fun TaskTerminal(
             SettingsPanel(
                 state = state,
                 soundEnabled = soundEnabled,
-                onActiveTaskBrightnessChange = onActiveTaskBrightnessChange,
                 onSoundEnabledChange = { enabled ->
                     sound.setEnabled(enabled)
                     soundEnabled = enabled
@@ -1039,7 +1031,6 @@ private fun PixelButton(
 private fun SettingsPanel(
     state: AgentGridUiState,
     soundEnabled: Boolean,
-    onActiveTaskBrightnessChange: (Float) -> Unit,
     onSoundEnabledChange: (Boolean) -> Unit,
     onUnpair: () -> Unit,
     onExitTerminal: () -> Unit,
@@ -1058,37 +1049,6 @@ private fun SettingsPanel(
             if (state.linkState == LinkState.CONNECTED) AgentGridColors.Green else AgentGridColors.Red,
         )
         DetailLine("TASK", "${state.taskProjection.orderedTasks.size}", AgentGridColors.Cyan)
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("任务亮度", color = AgentGridColors.Text, fontSize = 10.sp)
-                Text(
-                    "${(state.activeTaskBrightness * 100).roundToInt()}%",
-                    color = AgentGridColors.Cyan,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-            Slider(
-                value = state.activeTaskBrightness,
-                onValueChange = onActiveTaskBrightnessChange,
-                valueRange = ScreenBrightnessPolicy.MIN_ACTIVE_BRIGHTNESS..
-                    ScreenBrightnessPolicy.MAX_ACTIVE_BRIGHTNESS,
-                colors = SliderDefaults.colors(
-                    thumbColor = AgentGridColors.Cyan,
-                    activeTrackColor = AgentGridColors.Cyan,
-                    inactiveTrackColor = AgentGridColors.Dimmed,
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .semantics {
-                        contentDescription = "有任务时的屏幕亮度"
-                    },
-            )
-        }
         PixelButton(
             if (soundEnabled) "提示音：开" else "提示音：关",
             if (soundEnabled) AgentGridColors.Green else AgentGridColors.Muted,

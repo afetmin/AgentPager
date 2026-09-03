@@ -25,7 +25,7 @@ android {
             ?: 1
         versionName = providers.environmentVariable("AGENTPAGER_VERSION_NAME")
             .orNull
-            ?: "0.3.0"
+            ?: "0.3.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

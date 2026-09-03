@@ -7,7 +7,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -20,28 +19,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        window.attributes = window.attributes.apply {
-            screenBrightness = ScreenBrightnessPolicy.brightnessFor(
-                lifecycle = viewModel.state.value.focusedTask?.lifecycle,
-                activeBrightness = viewModel.state.value.activeTaskBrightness,
-            )
-        }
         enterTerminalMode()
         importPairing(intent)
 
         setContent {
             val state by viewModel.state.collectAsStateWithLifecycle()
-            LaunchedEffect(
-                state.focusedTask?.lifecycle,
-                state.activeTaskBrightness,
-            ) {
-                window.attributes = window.attributes.apply {
-                    screenBrightness = ScreenBrightnessPolicy.brightnessFor(
-                        lifecycle = state.focusedTask?.lifecycle,
-                        activeBrightness = state.activeTaskBrightness,
-                    )
-                }
-            }
             AgentGridScreen(
                 state = state,
                 onPair = viewModel::pair,
@@ -49,7 +31,6 @@ class MainActivity : ComponentActivity() {
                 onControl = viewModel::control,
                 onFocus = viewModel::focus,
                 onToggleDashboard = viewModel::toggleDashboard,
-                onActiveTaskBrightnessChange = viewModel::setActiveTaskBrightness,
                 onExitTerminal = {
                     viewModel.setTerminalMode(false)
                     exitTerminalMode()

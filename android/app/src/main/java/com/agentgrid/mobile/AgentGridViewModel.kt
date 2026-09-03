@@ -32,7 +32,6 @@ data class AgentGridUiState(
     val pendingRequests: List<PendingRequest> = emptyList(),
     val pairingError: String? = null,
     val terminalMode: Boolean = true,
-    val activeTaskBrightness: Float = ScreenBrightnessPolicy.DEFAULT_ACTIVE_BRIGHTNESS,
 ) {
     val focusedTask: TaskSnapshot?
         get() = taskProjection.focusedTask
@@ -44,12 +43,6 @@ class AgentGridViewModel(application: Application) : AndroidViewModel(applicatio
     private val mutableState = MutableStateFlow(
         AgentGridUiState(
             terminalMode = preferences.getBoolean("terminal-mode", true),
-            activeTaskBrightness = ScreenBrightnessPolicy.sanitizeActiveBrightness(
-                preferences.getFloat(
-                    "active-task-brightness",
-                    ScreenBrightnessPolicy.DEFAULT_ACTIVE_BRIGHTNESS,
-                ),
-            ),
         ),
     )
     val state: StateFlow<AgentGridUiState> = mutableState.asStateFlow()
@@ -136,12 +129,6 @@ class AgentGridViewModel(application: Application) : AndroidViewModel(applicatio
     fun setTerminalMode(enabled: Boolean) {
         preferences.edit { putBoolean("terminal-mode", enabled) }
         mutableState.value = mutableState.value.copy(terminalMode = enabled)
-    }
-
-    fun setActiveTaskBrightness(value: Float) {
-        val brightness = ScreenBrightnessPolicy.sanitizeActiveBrightness(value)
-        preferences.edit { putFloat("active-task-brightness", brightness) }
-        mutableState.value = mutableState.value.copy(activeTaskBrightness = brightness)
     }
 
     override fun onCleared() {
