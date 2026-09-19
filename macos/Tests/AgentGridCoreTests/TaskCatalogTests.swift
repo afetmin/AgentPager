@@ -155,6 +155,36 @@ func freshUserMessageReopensTerminalTask() throws {
     #expect(updated.userPrompt == "继续处理这个任务")
 }
 
+@Test("Rollout 后续运行信号清除观察型等待状态")
+func runningRolloutClearsObservedRequest() {
+    let waitingAt = Date(timeIntervalSince1970: 4_000)
+    let waiting = CodexRolloutSignal(
+        sessionID: "session-1",
+        cwd: "/tmp/AgentGrid",
+        lifecycle: .waitingAnswer,
+        activity: .thinking,
+        requestKind: .question,
+        summary: "是否继续？",
+        timestamp: waitingAt
+    )
+    let resumed = CodexRolloutSignal(
+        sessionID: "session-1",
+        cwd: "/tmp/AgentGrid",
+        lifecycle: .running,
+        activity: .thinking,
+        timestamp: waitingAt.addingTimeInterval(1)
+    )
+    var catalog = TaskCatalog()
+
+    catalog.accept(.rollout([waiting]))
+    #expect(catalog.projection().tasks[0].lifecycle == .waitingAnswer)
+    #expect(catalog.projection().pendingRequests.count == 1)
+
+    catalog.accept(.rollout([resumed]))
+    #expect(catalog.projection().tasks[0].lifecycle == .running)
+    #expect(catalog.projection().pendingRequests.isEmpty)
+}
+
 @Test("子代理变化与父 Task 活动在同一 Revision 中提交")
 func subagentAndParentActivityCommitTogether() {
     let now = Date(timeIntervalSince1970: 5_000)
