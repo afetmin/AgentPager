@@ -440,9 +440,52 @@ public struct CodexRolloutReader: Sendable {
             ?? (type == "tool_search_call" ? "tool_search" : nil)
         let rawArguments = payload["arguments"] as? String
             ?? payload["input"] as? String
+        let nestedNames = ToolStepSanitizer.isExecScriptTool(name)
+            ? ToolStepSanitizer.nestedToolNames(in: rawArguments ?? "")
+            : []
+        let effectiveNames = nestedNames.isEmpty ? [name].compactMap { $0 } : nestedNames
         let detail = argumentSummary(rawArguments, toolName: name)
-        let step = CodexEventReducer.latestStep(toolName: name, summary: detail)
-        let activity = CodexEventReducer.activity(for: name)
+
+        if effectiveNames.contains(where: { toolLeaf($0) == "request_user_input" }) {
+            return CodexRolloutSignal(
+                sessionID: sessionID,
+                cwd: cwd,
+                lifecycle: .waitingAnswer,
+                activity: .thinking,
+                requestKind: .question,
+                summary: requestSummary(rawArguments) ?? detail,
+                subagentID: subagentID,
+                subagentPath: subagentPath,
+                timestamp: timestamp
+            )
+        }
+        let requestsSandboxApproval = effectiveNames.contains(where: {
+            CodexEventReducer.isCommandTool($0)
+        }) && ToolStepSanitizer.javascriptStringArgument(
+            named: "sandbox_permissions",
+            in: rawArguments ?? ""
+        )?.lowercased() == "require_escalated"
+        if effectiveNames.contains(where: { toolLeaf($0) == "request_permissions" })
+            || requestsSandboxApproval {
+            return CodexRolloutSignal(
+                sessionID: sessionID,
+                cwd: cwd,
+                lifecycle: .waitingApproval,
+                activity: .executing,
+                requestKind: .approval,
+                summary: requestSummary(rawArguments) ?? detail,
+                subagentID: subagentID,
+                subagentPath: subagentPath,
+                timestamp: timestamp
+            )
+        }
+
+        let effectiveName = preferredToolName(effectiveNames) ?? name
+        let step = CodexEventReducer.latestStep(toolName: effectiveName, summary: detail)
+        let activity = activity(
+            toolNames: effectiveNames,
+            summary: detail
+        )
         return CodexRolloutSignal(
             sessionID: sessionID,
             cwd: cwd,
@@ -465,7 +508,11 @@ public struct CodexRolloutReader: Sendable {
         }
         if ToolStepSanitizer.isExecScriptTool(toolName) {
             // exec 的输入是 JavaScript 包装代码，展示时只保留内部工具真正收到的参数。
-            for key in ["cmd", "command", "query", "path", "ref_id", "step"] {
+            let nestedNames = ToolStepSanitizer.nestedToolNames(in: raw)
+            if nestedNames.contains(where: ToolStepSanitizer.isApplyPatchTool) {
+                return ToolStepSanitizer.patchTargetSummary(raw)
+            }
+            for key in ["cmd", "command", "query", "q", "path", "ref_id", "step"] {
                 if let value = ToolStepSanitizer.javascriptStringArgument(
                     named: key,
                     in: raw
@@ -494,6 +541,60 @@ public struct CodexRolloutReader: Sendable {
                 .flatMap { clipped($0) }
         }
         return displayValue(object).flatMap { clipped($0) }
+    }
+
+    private static func preferredToolName(_ names: [String]) -> String? {
+        names.first { CodexEventReducer.activity(for: $0) == .testing }
+            ?? names.first { CodexEventReducer.activity(for: $0) == .editing }
+            ?? names.first {
+                [.reading, .searching, .browsing].contains(
+                    CodexEventReducer.activity(for: $0)
+                )
+            }
+            ?? names.first
+    }
+
+    private static func activity(
+        toolNames: [String],
+        summary: String?
+    ) -> AgentActivity {
+        if toolNames.contains(where: { CodexEventReducer.activity(for: $0) == .testing })
+            || toolNames.contains(where: CodexEventReducer.isCommandTool)
+                && ToolStepSanitizer.isTestCommand(summary) {
+            return .testing
+        }
+        let effectiveName = preferredToolName(toolNames)
+        return CodexEventReducer.activity(for: effectiveName)
+    }
+
+    private static func toolLeaf(_ name: String) -> String {
+        name.split(separator: ".").last.map(String.init)?.lowercased()
+            ?? name.lowercased()
+    }
+
+    private static func requestSummary(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        for key in ["question", "prompt", "message", "reason", "justification"] {
+            if let value = ToolStepSanitizer.javascriptStringArgument(named: key, in: raw) {
+                return clipped(value)
+            }
+        }
+        guard let data = raw.data(using: .utf8),
+              let dictionary = try? JSONSerialization.jsonObject(with: data)
+                as? [String: Any] else {
+            return nil
+        }
+        for key in ["question", "prompt", "message", "reason", "justification"] {
+            if let value = displayValue(dictionary[key]) {
+                return clipped(value)
+            }
+        }
+        if let questions = dictionary["questions"] as? [[String: Any]],
+           let first = questions.first,
+           let value = displayValue(first["question"]) {
+            return clipped(value)
+        }
+        return nil
     }
 
     private static func commandSummary(_ payload: [String: Any]) -> String? {

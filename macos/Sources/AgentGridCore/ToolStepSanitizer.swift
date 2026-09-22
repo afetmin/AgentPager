@@ -1,6 +1,57 @@
 import Foundation
 
 enum ToolStepSanitizer {
+    static func nestedToolNames(in source: String) -> [String] {
+        let pattern = #"(?<![A-Za-z0-9_$])tools\s*(?:\.\s*([A-Za-z_$][A-Za-z0-9_$]*)|\[\s*[\"']([^\"']+)[\"']\s*\])\s*\("#
+        guard let expression = try? NSRegularExpression(pattern: pattern) else {
+            return []
+        }
+        let matches = expression.matches(
+            in: source,
+            range: NSRange(source.startIndex..., in: source)
+        )
+        var seen = Set<String>()
+        return matches.compactMap { match in
+            for index in 1...2 where match.range(at: index).location != NSNotFound {
+                guard let range = Range(match.range(at: index), in: source) else {
+                    continue
+                }
+                let name = String(source[range])
+                if seen.insert(name).inserted {
+                    return name
+                }
+            }
+            return nil
+        }
+    }
+
+    static func isTestCommand(_ value: String?) -> Bool {
+        guard let value else {
+            return false
+        }
+        let command = value
+            .replacingOccurrences(of: "\\n", with: " ")
+            .replacingOccurrences(of: "\\r", with: " ")
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+            .lowercased()
+        guard !command.isEmpty else {
+            return false
+        }
+        let patterns = [
+            #"(^|[;&|]\s*)(swift\s+test)(\s|$)"#,
+            #"(^|[;&|]\s*)(xcodebuild\b[^;&|]*\btest\b)"#,
+            #"(^|[;&|]\s*)((python|python3)(\.\d+)?\s+-m\s+(pytest|unittest)|pytest)(\s|$)"#,
+            #"(^|[;&|]\s*)((npm|pnpm)\s+(run\s+)?test|yarn\s+test|bun\s+test)(\s|$)"#,
+            #"(^|[;&|]\s*)(cargo\s+test|go\s+test|dotnet\s+test)(\s|$)"#,
+            #"(^|[;&|]\s*)((\./)?gradlew?\b[^;&|]*\btest\b|mvn\b[^;&|]*\btest\b)(\s|$)"#,
+            #"(^|[;&|]\s*)(ctest|vitest|jest)(\s|$)"#,
+        ]
+        return patterns.contains { pattern in
+            command.range(of: pattern, options: .regularExpression) != nil
+        }
+    }
+
     static func sanitizedForTransport(_ value: String?) -> String? {
         guard let value else {
             return nil
@@ -63,7 +114,7 @@ enum ToolStepSanitizer {
         }
 
         let tail = patch[firstTarget.range.upperBound...]
-        let boundaryTokens = ["\n", "\r", " ***", " @@", " +", " -"]
+        let boundaryTokens = ["\n", "\r", "\\n", "\\r", " ***", " @@", " +", " -"]
         let boundary = boundaryTokens
             .compactMap { tail.range(of: $0)?.lowerBound }
             .min()

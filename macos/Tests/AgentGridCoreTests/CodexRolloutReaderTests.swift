@@ -191,6 +191,136 @@ struct CodexRolloutReaderTests {
         )
 
         #expect(signal?.latestStep == "swift test --filter CodexRolloutReaderTests")
+        #expect(signal?.activity == .testing)
+    }
+
+    @Test
+    func functionsExec识别内层浏览与编辑工具() throws {
+        let webInput = """
+        const r = await tools.web__run({search_query:[{q:"AgentPager"}]}); text(r)
+        """
+        let patchInput = """
+        const patch = "*** Begin Patch\\n*** Update File: /tmp/status.txt\\n@@\\n-old\\n+new\\n*** End Patch";
+        text(await tools.apply_patch(patch))
+        """
+
+        func signal(input: String) throws -> CodexRolloutSignal? {
+            let line = try JSONSerialization.data(withJSONObject: [
+                "type": "response_item",
+                "payload": [
+                    "type": "custom_tool_call",
+                    "name": "exec",
+                    "input": input,
+                ],
+            ])
+            return CodexRolloutReader.signal(
+                from: line,
+                sessionID: "session-1",
+                cwd: "/tmp/AgentGrid"
+            )
+        }
+
+        let web = try signal(input: webInput)
+        let patch = try signal(input: patchInput)
+
+        #expect(web?.activity == .browsing)
+        #expect(patch?.activity == .editing)
+        #expect(patch?.latestStep == "/tmp/status.txt")
+    }
+
+    @Test
+    func functionsExec按测试命令区分测试与普通执行() throws {
+        func signal(command: String) throws -> CodexRolloutSignal? {
+            let input = """
+            const r = await tools.exec_command({cmd:\"\(command)\"}); text(r.output)
+            """
+            let line = try JSONSerialization.data(withJSONObject: [
+                "type": "response_item",
+                "payload": [
+                    "type": "custom_tool_call",
+                    "name": "exec",
+                    "input": input,
+                ],
+            ])
+            return CodexRolloutReader.signal(
+                from: line,
+                sessionID: "session-1",
+                cwd: "/tmp/AgentGrid"
+            )
+        }
+
+        #expect(try signal(command: "python3 -m unittest discover -v")?.activity == .testing)
+        #expect(try signal(command: "echo status")?.activity == .executing)
+    }
+
+    @Test
+    func 当前Codex响应项触发等待状态() throws {
+        let questionLine = try JSONSerialization.data(withJSONObject: [
+            "type": "response_item",
+            "payload": [
+                "type": "function_call",
+                "name": "request_user_input",
+                "arguments": "{\"questions\":[{\"question\":\"是否继续？\"}]}",
+            ],
+        ])
+        let permissionInput = """
+        const r = await tools.request_permissions({permissions:{network:{enabled:true}},reason:"状态测试"}); text(r)
+        """
+        let permissionLine = try JSONSerialization.data(withJSONObject: [
+            "type": "response_item",
+            "payload": [
+                "type": "custom_tool_call",
+                "name": "exec",
+                "input": permissionInput,
+            ],
+        ])
+
+        let question = CodexRolloutReader.signal(
+            from: questionLine,
+            sessionID: "session-1",
+            cwd: "/tmp/AgentGrid"
+        )
+        let permission = CodexRolloutReader.signal(
+            from: permissionLine,
+            sessionID: "session-1",
+            cwd: "/tmp/AgentGrid"
+        )
+
+        #expect(question?.lifecycle == .waitingAnswer)
+        #expect(question?.requestKind == .question)
+        #expect(question?.summary == "是否继续？")
+        #expect(permission?.lifecycle == .waitingApproval)
+        #expect(permission?.requestKind == .approval)
+        #expect(permission?.summary == "状态测试")
+    }
+
+    @Test
+    func functionsExec需要沙箱升级时触发等待批准() throws {
+        let input = """
+        const r = await tools.exec_command({
+          cmd:"curl http://127.0.0.1:8787/api/remote",
+          sandbox_permissions:"require_escalated",
+          justification:"允许访问本地开发板吗？"
+        }); text(r.output)
+        """
+        let line = try JSONSerialization.data(withJSONObject: [
+            "type": "response_item",
+            "payload": [
+                "type": "custom_tool_call",
+                "name": "exec",
+                "input": input,
+            ],
+        ])
+
+        let signal = CodexRolloutReader.signal(
+            from: line,
+            sessionID: "session-1",
+            cwd: "/tmp/AgentGrid"
+        )
+
+        #expect(signal?.lifecycle == .waitingApproval)
+        #expect(signal?.requestKind == .approval)
+        #expect(signal?.summary == "允许访问本地开发板吗？")
     }
 
     @Test
