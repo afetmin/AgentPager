@@ -28,11 +28,11 @@ final class BridgeModel {
     private var usageLoadTask: Task<Void, Never>?
     private var rolloutTask: Task<Void, Never>?
     private var hasStarted = false
+    private var nextSessionReconciliation = Date.distantPast
 
     func start() {
         guard !hasStarted else { return }
         hasStarted = true
-        publishCatalog()
 
         do {
             pairingSecret = try PairingSecretStore.loadOrCreate()
@@ -90,6 +90,7 @@ final class BridgeModel {
         refreshClaudeHookStatus()
         refreshUsage()
         handleRolloutObservation()
+        publishCatalog()
         refreshTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(600))
@@ -241,12 +242,33 @@ final class BridgeModel {
     }
 
     private func handleRolloutObservation() {
-        let signals = rolloutObservation.observe()
-        guard !signals.isEmpty else {
-            return
+        let now = Date()
+        let signals = rolloutObservation.observe(now: now)
+        if !signals.isEmpty,
+           let commit = catalog.accept(.rollout(signals)) {
+            applyCatalogCommit(commit)
         }
 
-        if let commit = catalog.accept(.rollout(signals)) {
+        guard now >= nextSessionReconciliation else {
+            return
+        }
+        nextSessionReconciliation = now.addingTimeInterval(60)
+        let candidates = Set(
+            catalog.projection().tasks.compactMap { task -> String? in
+                guard task.source == .codexDesktop || task.source == .codexCLI,
+                      task.lifecycle == .starting || task.lifecycle == .running else {
+                    return nil
+                }
+                return task.id
+            }
+        )
+        let existingSessionIDs = rolloutObservation.existingSessionIDs(
+            matching: candidates
+        )
+        if let commit = catalog.reconcileCodexSessions(
+            existingSessionIDs: existingSessionIDs,
+            now: now
+        ) {
             applyCatalogCommit(commit)
         }
     }
