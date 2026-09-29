@@ -209,6 +209,131 @@ func subagentAndParentActivityCommitTogether() {
     #expect(task.subagents[0].latestStep == "修改 TaskCatalog")
 }
 
+@Test("失去会话文件的旧 Codex 运行任务会结束并按现有保留期清理")
+func orphanedCodexTasksAreReconciledBySessionID() {
+    let now = Date(timeIntervalSince1970: 20_000)
+    let sharedTitle = "memories · Memory Writing Agent"
+    let orphan = TaskSnapshot(
+        id: "orphan-session",
+        source: .codexDesktop,
+        projectName: "memories",
+        title: sharedTitle,
+        lifecycle: .running,
+        activity: .thinking,
+        startedAt: now.addingTimeInterval(-10_000),
+        updatedAt: now.addingTimeInterval(-4_000)
+    )
+    let live = TaskSnapshot(
+        id: "live-session",
+        source: .codexDesktop,
+        projectName: "memories",
+        title: sharedTitle,
+        lifecycle: .running,
+        activity: .thinking,
+        startedAt: now.addingTimeInterval(-10_000),
+        updatedAt: now.addingTimeInterval(-4_000)
+    )
+    var catalog = TaskCatalog(restoring: [orphan, live])
+
+    let changed = catalog.reconcileCodexSessions(
+        existingSessionIDs: ["live-session"],
+        now: now
+    )
+    let tasks = catalog.projection().tasks
+
+    #expect(changed)
+    #expect(tasks.map(\.id) == ["live-session"])
+    #expect(tasks[0].title == sharedTitle)
+    #expect(tasks[0].lifecycle == .running)
+}
+
+@Test("会话清理保留缓冲期、等待状态、Claude 与仍有文件的任务")
+func codexSessionReconciliationProtectsValidTasks() {
+    let now = Date(timeIntervalSince1970: 30_000)
+    let old = now.addingTimeInterval(-2_000)
+    let tasks = [
+        TaskSnapshot(
+            id: "fresh-codex",
+            source: .codexDesktop,
+            projectName: "fresh",
+            lifecycle: .running,
+            updatedAt: now.addingTimeInterval(-599)
+        ),
+        TaskSnapshot(
+            id: "approval",
+            source: .codexDesktop,
+            projectName: "approval",
+            lifecycle: .waitingApproval,
+            updatedAt: old
+        ),
+        TaskSnapshot(
+            id: "answer",
+            source: .codexCLI,
+            projectName: "answer",
+            lifecycle: .waitingAnswer,
+            updatedAt: old
+        ),
+        TaskSnapshot(
+            id: "live-codex",
+            source: .codexCLI,
+            projectName: "live",
+            lifecycle: .running,
+            updatedAt: old
+        ),
+        TaskSnapshot(
+            id: "claude",
+            source: .claudeCode,
+            projectName: "claude",
+            lifecycle: .running,
+            updatedAt: old
+        ),
+    ]
+    var catalog = TaskCatalog(
+        restoring: tasks,
+        pendingRequests: [
+            PendingRequest(taskID: "approval", kind: .approval, summary: nil),
+            PendingRequest(taskID: "answer", kind: .question, summary: nil),
+        ]
+    )
+
+    let changed = catalog.reconcileCodexSessions(
+        existingSessionIDs: ["live-codex"],
+        now: now
+    )
+
+    #expect(!changed)
+    #expect(Set(catalog.projection().tasks.map(\.id)) == Set(tasks.map(\.id)))
+    #expect(catalog.projection().tasks.allSatisfy { !$0.isTerminal })
+    #expect(catalog.projection().pendingRequests.count == 2)
+}
+
+@Test("较新的孤立任务先标记中断并沿用最后活动时间")
+func recentOrphanUsesLastActivityForTerminalRetention() throws {
+    let now = Date(timeIntervalSince1970: 40_000)
+    let updatedAt = now.addingTimeInterval(-900)
+    let task = TaskSnapshot(
+        id: "recent-orphan",
+        source: .codexCLI,
+        projectName: "AgentPager",
+        lifecycle: .starting,
+        activity: .thinking,
+        updatedAt: updatedAt
+    )
+    var catalog = TaskCatalog(restoring: [task])
+
+    let changed = catalog.reconcileCodexSessions(
+        existingSessionIDs: [],
+        now: now
+    )
+    let interrupted = try #require(catalog.projection().tasks.first)
+
+    #expect(changed)
+    #expect(interrupted.lifecycle == .interrupted)
+    #expect(interrupted.activity == nil)
+    #expect(interrupted.completedAt == updatedAt)
+    #expect(interrupted.isUnread)
+}
+
 private final class RecordingPermissionResolver:
     CodexPermissionResolving,
     @unchecked Sendable
