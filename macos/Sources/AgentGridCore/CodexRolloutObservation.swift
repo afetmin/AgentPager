@@ -47,4 +47,13 @@ public struct CodexRolloutObservation: Sendable {
         }
         return reader.poll()
     }
+
+    public func existingSessionIDs(
+        matching sessionIDs: Set<String>
+    ) -> Set<String> {
+        reader.existingSessionIDs(
+            in: sessionsRoot,
+            matching: sessionIDs
+        )
+    }
 }

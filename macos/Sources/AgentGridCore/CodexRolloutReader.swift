@@ -71,6 +71,49 @@ public struct CodexRolloutReader: Sendable {
         !trackedFiles.isEmpty
     }
 
+    public func existingSessionIDs(
+        in sessionsRoot: URL,
+        matching sessionIDs: Set<String>
+    ) -> Set<String> {
+        guard !sessionIDs.isEmpty else {
+            return []
+        }
+
+        let fileManager = FileManager.default
+        var existing = Set(
+            trackedFiles.values.compactMap { tracked -> String? in
+                guard tracked.subagentID == nil,
+                      sessionIDs.contains(tracked.sessionID),
+                      fileManager.fileExists(atPath: tracked.url.path) else {
+                    return nil
+                }
+                return tracked.sessionID
+            }
+        )
+        var unresolved = sessionIDs.subtracting(existing)
+        guard !unresolved.isEmpty,
+              let enumerator = fileManager.enumerator(
+                at: sessionsRoot,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles, .skipsPackageDescendants]
+              ) else {
+            return existing
+        }
+
+        for case let fileURL as URL in enumerator
+        where fileURL.pathExtension == "jsonl" {
+            let filename = fileURL.lastPathComponent
+            for sessionID in unresolved where filename.contains(sessionID) {
+                existing.insert(sessionID)
+            }
+            unresolved.subtract(existing)
+            if unresolved.isEmpty {
+                break
+            }
+        }
+        return existing
+    }
+
     public mutating func track(
         filePath: String?,
         sessionID: String,
