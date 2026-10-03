@@ -109,3 +109,29 @@ func observationFindsExistingSessionSources() throws {
 
     #expect(existing == [restoredID, "019fa002-hook"])
 }
+
+@Test("同时核对默认目录和 CODEX_HOME 中的会话文件")
+func observationFindsConfiguredCodexHomeSessions() throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    let defaultSessions = root.appendingPathComponent("default", isDirectory: true)
+    let configuredSessions = root.appendingPathComponent("configured", isDirectory: true)
+    try FileManager.default.createDirectory(at: defaultSessions, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: configuredSessions, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let defaultID = "019fa004-default"
+    let configuredID = "019fa005-configured"
+    try Data().write(to: defaultSessions.appendingPathComponent("rollout-\(defaultID).jsonl"))
+    try Data().write(to: configuredSessions.appendingPathComponent("rollout-\(configuredID).jsonl"))
+
+    let observation = CodexRolloutObservation(
+        sessionsRoot: defaultSessions,
+        lookback: 60,
+        discoveryInterval: 3,
+        additionalSessionsRoot: configuredSessions
+    )
+
+    #expect(observation.existingSessionIDs(matching: [defaultID, configuredID])
+        == [defaultID, configuredID])
+}
