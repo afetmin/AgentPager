@@ -94,11 +94,16 @@ public struct PersistentTaskCatalog: Sendable {
 
     private mutating func refreshTitles() -> Bool {
         let tasks = catalog.projection().tasks
-        guard titleSynchronizer.needsRefresh(for: tasks) else {
+        let revision = titleReader.revision()
+        guard titleSynchronizer.needsRefresh(
+            for: tasks,
+            revision: revision
+        ) else {
             return false
         }
         return titleSynchronizer.applyAvailableTitles(
             titleReader.loadTitles(),
+            revision: revision,
             to: &catalog
         )
     }

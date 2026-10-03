@@ -59,6 +59,20 @@ func persistentCatalogCommitsProjectionAndStorageTogether() throws {
     #expect(restored.userPrompt == "优化架构")
     #expect(restored.latestStep == nil)
     #expect(restored.subagents.isEmpty)
+
+    try Data(
+        """
+        {"id":"session-1","thread_name":"用户重命名后的任务标题","updated_at":"2026-07-26T12:01:00Z"}
+
+        """.utf8
+    ).write(to: titleFile)
+
+    let optionalRenamedCommit = catalog.maintain(now: now)
+    let renamedCommit = try #require(optionalRenamedCommit)
+    #expect(
+        renamedCommit.projection.tasks[0].title
+            == "AgentGrid · 用户重命名后的任务标题"
+    )
 }
 
 @Test("无语义变化时持久 Task Catalog 不产生重复提交")

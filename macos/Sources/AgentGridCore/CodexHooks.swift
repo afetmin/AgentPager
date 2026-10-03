@@ -149,12 +149,15 @@ public enum CodexPermissionDecision: String, Codable, Equatable, Sendable {
 
 public enum CodexHookOutput {
     private struct PermissionResponse: Encodable {
-        var `continue` = true
         var hookSpecificOutput: SpecificOutput
 
         struct SpecificOutput: Encodable {
             var hookEventName = CodexHookEventName.permissionRequest
-            var decision: CodexPermissionDecision
+            var decision: Decision
+        }
+
+        struct Decision: Encodable {
+            var behavior: CodexPermissionDecision
         }
     }
 
@@ -163,7 +166,9 @@ public enum CodexHookOutput {
         encoder.outputFormatting = [.sortedKeys]
         var data = try encoder.encode(
             PermissionResponse(
-                hookSpecificOutput: .init(decision: decision)
+                hookSpecificOutput: .init(
+                    decision: .init(behavior: decision)
+                )
             )
         )
         data.append(UInt8(ascii: "\n"))
