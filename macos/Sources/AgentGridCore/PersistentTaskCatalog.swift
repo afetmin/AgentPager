@@ -71,6 +71,21 @@ public struct PersistentTaskCatalog: Sendable {
         return commit()
     }
 
+    public mutating func reconcileCodexSessions(
+        existingSessionIDs: Set<String>,
+        now: Date = .now,
+        gracePeriod: TimeInterval = 10 * 60
+    ) -> TaskCatalogCommit? {
+        guard catalog.reconcileCodexSessions(
+            existingSessionIDs: existingSessionIDs,
+            now: now,
+            gracePeriod: gracePeriod
+        ) else {
+            return nil
+        }
+        return commit()
+    }
+
     public mutating func perform(
         _ control: AuthorizedTaskControl,
         permissionResolver: any CodexPermissionResolving,

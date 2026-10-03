@@ -139,6 +139,28 @@ public struct TaskCatalog: Sendable {
         )
     }
 
+    @discardableResult
+    public mutating func reconcileCodexSessions(
+        existingSessionIDs: Set<String>,
+        now: Date = .now,
+        gracePeriod: TimeInterval = 10 * 60
+    ) -> Bool {
+        let previousTasks = store.tasks
+        let previousRequests = requestsByTaskID
+
+        _ = store.interruptOrphanedCodexTasks(
+            existingSessionIDs: existingSessionIDs,
+            now: now,
+            gracePeriod: gracePeriod
+        )
+        normalize(now: now)
+
+        return commitIfChanged(
+            previousTasks: previousTasks,
+            previousRequests: previousRequests
+        )
+    }
+
     public mutating func perform(
         _ control: AuthorizedTaskControl,
         permissionResolver: any CodexPermissionResolving,

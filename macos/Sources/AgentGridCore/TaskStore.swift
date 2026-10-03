@@ -91,6 +91,33 @@ public struct TaskStore: Sendable {
     }
 
     @discardableResult
+    public mutating func interruptOrphanedCodexTasks(
+        existingSessionIDs: Set<String>,
+        now: Date = .now,
+        gracePeriod: TimeInterval = 10 * 60
+    ) -> Bool {
+        var changed = false
+        for index in tasks.indices {
+            let task = tasks[index]
+            guard task.source == .codexDesktop || task.source == .codexCLI,
+                  task.lifecycle == .starting || task.lifecycle == .running,
+                  now.timeIntervalSince(task.updatedAt) >= gracePeriod,
+                  !existingSessionIDs.contains(task.id) else {
+                continue
+            }
+
+            // 保留最后一次真实活动时间，让已有终态保留策略决定是否立即移除。
+            tasks[index].lifecycle = .interrupted
+            tasks[index].activity = nil
+            tasks[index].completedAt = task.updatedAt
+            tasks[index].isUnread = true
+            tasks[index].capabilities = []
+            changed = true
+        }
+        return changed
+    }
+
+    @discardableResult
     public mutating func purgeTerminalSubagents(
         now: Date = .now,
         retention: TimeInterval = 4
