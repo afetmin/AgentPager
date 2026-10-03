@@ -22,7 +22,12 @@ public final class HookBridgeServer: CodexPermissionResolving, @unchecked Sendab
     }
 
     public func start(port: UInt16 = 49_361) throws {
-        let listener = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: port)!)
+        let parameters = NWParameters.tcp
+        parameters.acceptLocalOnly = true
+        let listener = try NWListener(
+            using: parameters,
+            on: NWEndpoint.Port(rawValue: port)!
+        )
         listener.newConnectionHandler = { [weak self] connection in
             self?.accept(connection)
         }
@@ -60,6 +65,10 @@ public final class HookBridgeServer: CodexPermissionResolving, @unchecked Sendab
     }
 
     private func accept(_ connection: NWConnection) {
+        guard Self.isLoopback(connection.endpoint) else {
+            connection.cancel()
+            return
+        }
         connection.stateUpdateHandler = { state in
             if case let .failed(error) = state {
                 fputs("AgentPager Hook 连接错误：\(error)\n", stderr)
@@ -144,13 +153,23 @@ public final class HookBridgeServer: CodexPermissionResolving, @unchecked Sendab
         source: HookSource,
         connection: NWConnection
     ) {
-        lock.withLock {
-            pending[sessionID] = (connection: connection, source: source)
+        let displaced = lock.withLock {
+            pending.updateValue(
+                (connection: connection, source: source),
+                forKey: sessionID
+            )
+        }
+        if let displaced {
+            // 手机协议目前按任务而不是按单次工具调用审批。若同一会话并发
+            // 发出第二个请求，让旧请求回退到 Codex 本地审批，避免连接被
+            // 覆盖后一直挂到一小时超时；手机保留并展示最新请求。
+            acknowledge(displaced.connection)
         }
     }
 
     private func acknowledge(_ connection: NWConnection) {
-        // 空行响应：Codex 视为继续；Claude 视为 continue=true。两端都放行。
+        // 空行不作阻断性决定；用于被替换的 PermissionRequest 时，
+        // Codex 会回退到正常的本地审批流程。
         connection.send(content: Data("\n".utf8), completion: .contentProcessed { _ in
             connection.cancel()
         })
@@ -179,6 +198,11 @@ public final class HookBridgeServer: CodexPermissionResolving, @unchecked Sendab
             }
             return nil
         }
+    }
+
+    static func isLoopback(_ endpoint: NWEndpoint) -> Bool {
+        guard case let .hostPort(host, _) = endpoint else { return false }
+        return ["127.0.0.1", "::1", "localhost"].contains("\(host)".lowercased())
     }
 }
 

@@ -51,7 +51,7 @@ public struct TaskStore: Sendable {
         return changed
     }
 
-    private static func displayTitle(
+    static func displayTitle(
         projectName: String,
         codexTitle: String
     ) -> String {

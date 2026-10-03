@@ -110,3 +110,21 @@ func hookInstallerMigratesLegacyManagedGroups() throws {
     #expect(!commands[0].contains("AgentGridHooks"))
     #expect(CodexHookInstaller.isInstalled(data: installed))
 }
+
+@Test("Codex 权限响应格式符合当前 PermissionRequest 规范")
+func codexPermissionOutputShape() throws {
+    let data = try CodexHookOutput.permission(.allow)
+    let object = try #require(
+        JSONSerialization.jsonObject(with: data) as? [String: Any]
+    )
+    let hookSpecificOutput = try #require(
+        object["hookSpecificOutput"] as? [String: Any]
+    )
+    let decision = try #require(
+        hookSpecificOutput["decision"] as? [String: Any]
+    )
+
+    #expect(object["continue"] == nil)
+    #expect(hookSpecificOutput["hookEventName"] as? String == "PermissionRequest")
+    #expect(decision["behavior"] as? String == "allow")
+}
