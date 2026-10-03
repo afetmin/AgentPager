@@ -51,11 +51,11 @@ AgentPager 将 Codex Desktop、Codex CLI 与 Claude Code 的运行状态通过�
 
 ## 下载
 
-前往 [GitHub Releases](../../releases/latest) 直接下载安装包：
+按平台下载安装包：
 
-- `AgentPager.apk`：安装到 Android 10 或更高版本的手机
-- `AgentPager-macOS.dmg`：安装到 macOS 14 或更高版本的 Mac
-- `AgentPager-Windows-Setup.exe`：安装到 Windows 10/11 x64
+- [AgentPager.apk（v0.3.2）](https://github.com/afetmin/AgentPager/releases/download/v0.3.2/AgentPager.apk)：安装到 Android 10 或更高版本的手机
+- [AgentPager-macOS.dmg（v0.3.3）](https://github.com/afetmin/AgentPager/releases/download/v0.3.3/AgentPager-macOS.dmg)：安装到 macOS 14 或更高版本的 Mac
+- [AgentPager-Windows-Setup.exe（v0.3.2）](https://github.com/afetmin/AgentPager/releases/download/v0.3.2/AgentPager-Windows-Setup.exe)：安装到 Windows 10/11 x64
 
 
 > 未经 Apple 公证的版本首次启动时，需要在 macOS“系统设置 → 隐私与安全性”中确认打开。
@@ -156,11 +156,11 @@ That is how AgentPager came to be: putting an idle phone back to work as a genui
 
 ## Download
 
-Go to [GitHub Releases](../../releases/latest) to download the installers directly:
+Download the installer for your platform:
 
-- `AgentPager.apk`: Install on an Android 10 or later phone.
-- `AgentPager-macOS.dmg`: Install on a Mac running macOS 14 or later.
-- `AgentPager-Windows-Setup.exe`: Install on a Windows 10/11 x64 PC.
+- [AgentPager.apk (v0.3.2)](https://github.com/afetmin/AgentPager/releases/download/v0.3.2/AgentPager.apk): Install on an Android 10 or later phone.
+- [AgentPager-macOS.dmg (v0.3.3)](https://github.com/afetmin/AgentPager/releases/download/v0.3.3/AgentPager-macOS.dmg): Install on a Mac running macOS 14 or later.
+- [AgentPager-Windows-Setup.exe (v0.3.2)](https://github.com/afetmin/AgentPager/releases/download/v0.3.2/AgentPager-Windows-Setup.exe): Install on a Windows 10/11 x64 PC.
 
 > For the non-notarized build, confirm that you want to open it in macOS **System Settings > Privacy & Security** the first time you launch it.
 >
