@@ -22,11 +22,13 @@ final class BridgeModel {
     private let hookConfiguration = CodexHookConfiguration()
     private let claudeHookConfiguration = ClaudeHookConfiguration()
     private var rolloutObservation = CodexRolloutObservation()
+    private var claudeTranscriptObservation = ClaudeTranscriptObservation()
     private var hookServer: HookBridgeServer?
     private var webSocketServer: WebSocketServer?
     private var refreshTask: Task<Void, Never>?
     private var usageLoadTask: Task<Void, Never>?
     private var rolloutTask: Task<Void, Never>?
+    private var sessionReconciliationTask: Task<Void, Never>?
     private var hasStarted = false
     private var nextSessionReconciliation = Date.distantPast
 
@@ -234,6 +236,11 @@ final class BridgeModel {
             let task = catalog.projection().tasks.first { $0.id == hook.sessionID }
             projectSummary = task?.projectName ?? "Claude Code"
             lifecycleSummary = task?.lifecycle.rawValue ?? ""
+        case let .permissionExpired(sessionID):
+            commit = catalog.expirePendingRequest(sessionID: sessionID)
+            let task = catalog.projection().tasks.first { $0.id == sessionID }
+            projectSummary = task?.projectName ?? "Agent"
+            lifecycleSummary = task?.lifecycle.rawValue ?? ""
         }
         addEvent("\(projectSummary) · \(lifecycleSummary)")
         if let commit {
@@ -249,7 +256,7 @@ final class BridgeModel {
             applyCatalogCommit(commit)
         }
 
-        guard now >= nextSessionReconciliation else {
+        guard now >= nextSessionReconciliation, sessionReconciliationTask == nil else {
             return
         }
         nextSessionReconciliation = now.addingTimeInterval(60)
@@ -262,14 +269,44 @@ final class BridgeModel {
                 return task.id
             }
         )
-        let existingSessionIDs = rolloutObservation.existingSessionIDs(
-            matching: candidates
+        let claudeCandidates = Set(
+            catalog.projection().tasks.compactMap { task -> String? in
+                guard task.source == .claudeCode,
+                      task.lifecycle == .starting || task.lifecycle == .running else {
+                    return nil
+                }
+                return task.id
+            }
         )
-        if let commit = catalog.reconcileCodexSessions(
-            existingSessionIDs: existingSessionIDs,
-            now: now
-        ) {
-            applyCatalogCommit(commit)
+        let codexObservation = rolloutObservation
+        let claudeObservation = claudeTranscriptObservation
+        sessionReconciliationTask = Task { [weak self] in
+            // Directory scans and the bounded lsof probe must not block Hook
+            // delivery, phone controls or UI updates on the main actor.
+            let (existingSessionIDs, liveSessionIDs, claudeEvidence) = await Task.detached(
+                priority: .utility
+            ) {
+                (
+                    codexObservation.existingSessionIDs(matching: candidates),
+                    codexObservation.liveSessionIDs(matching: candidates),
+                    claudeObservation.evidence(matching: claudeCandidates)
+                )
+            }.value
+            guard let self else { return }
+            self.sessionReconciliationTask = nil
+            if let commit = self.catalog.reconcileCodexSessions(
+                existingSessionIDs: existingSessionIDs,
+                liveSessionIDs: liveSessionIDs,
+                now: .now
+            ) {
+                self.applyCatalogCommit(commit)
+            }
+            if let commit = self.catalog.reconcileClaudeSessions(
+                evidenceBySessionID: claudeEvidence,
+                now: .now
+            ) {
+                self.applyCatalogCommit(commit)
+            }
         }
     }
 

@@ -6,6 +6,7 @@ public struct CodexRolloutObservation: Sendable {
     private let lookback: TimeInterval
     private let discoveryInterval: TimeInterval
     private var nextDiscovery: Date
+    private let liveTranscriptPaths: @Sendable () -> Set<String>?
 
     public init() {
         let defaultRoot = FileManager.default.homeDirectoryForCurrentUser
@@ -30,7 +31,10 @@ public struct CodexRolloutObservation: Sendable {
         lookback: TimeInterval,
         discoveryInterval: TimeInterval,
         additionalSessionsRoot: URL? = nil,
-        reader: CodexRolloutReader = CodexRolloutReader()
+        reader: CodexRolloutReader = CodexRolloutReader(),
+        liveTranscriptPaths: @escaping @Sendable () -> Set<String>? = {
+            CodexSessionLivenessProbe.liveTranscriptPaths()
+        }
     ) {
         self.reader = reader
         var roots = [sessionsRoot]
@@ -42,6 +46,7 @@ public struct CodexRolloutObservation: Sendable {
         self.lookback = lookback
         self.discoveryInterval = discoveryInterval
         nextDiscovery = .distantPast
+        self.liveTranscriptPaths = liveTranscriptPaths
     }
 
     public mutating func include(_ hook: CodexHookPayload) {
@@ -76,5 +81,12 @@ public struct CodexRolloutObservation: Sendable {
             ))
         }
         return existing
+    }
+
+    /// nil means the OS probe failed: preserve existing tasks in that case.
+    public func liveSessionIDs(matching sessionIDs: Set<String>) -> Set<String>? {
+        guard !sessionIDs.isEmpty else { return [] }
+        guard let paths = liveTranscriptPaths() else { return nil }
+        return reader.sessionIDs(withOpenTranscriptPaths: paths, matching: sessionIDs)
     }
 }

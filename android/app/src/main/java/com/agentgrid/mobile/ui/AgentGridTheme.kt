@@ -27,6 +27,7 @@ object AgentGridColors {
     val Blue = Color(0xFF60A5FA)
     val Cyan = Color(0xFF5EEAD4)
     val Violet = Color(0xFFA78BFA)
+    val Magenta = Color(0xFFE879F9)
     val Indigo = Color(0xFF818CF8)
     val Orange = Color(0xFFFB923C)
     val Amber = Color(0xFFFDBA4A)

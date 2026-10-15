@@ -617,7 +617,7 @@ private fun TaskRow(
                 },
                 modifier = Modifier
                     .size(70.dp)
-                    .semantics { contentDescription = "任务状态 ${statusText(task.lifecycle)}" },
+                    .semantics { contentDescription = "任务状态 ${taskStatusText(task)}" },
             )
 
             Column(
@@ -656,7 +656,7 @@ private fun TaskRow(
                             overflow = TextOverflow.Ellipsis,
                         )
                         CommandTicker(
-                            text = task.latestStep ?: statusText(task.lifecycle),
+                            text = task.latestStep ?: taskStatusText(task),
                             color = statusColor(task).copy(alpha = rowAlpha),
                         )
                     }
@@ -987,13 +987,13 @@ private fun SubagentRow(
                 )
             }
             Text(
-                "${statusText(subagent.lifecycle)} · ${formatElapsed(subagent.elapsedAt(now))}",
+                "${lifecycleStatusText(subagent.lifecycle)} · ${formatElapsed(subagent.elapsedAt(now))}",
                 color = color,
                 fontSize = 9.sp,
             )
         }
         Text(
-            "└ ${subagent.latestStep ?: activityText(subagent.activity)}",
+            "└ ${subagent.latestStep ?: activityStatusText(subagent.activity)}",
             color = AgentGridColors.Muted,
             fontSize = 9.sp,
             maxLines = 1,
@@ -1060,17 +1060,6 @@ private fun SettingsPanel(
     }
 }
 
-private fun statusText(lifecycle: AgentLifecycle): String = when (lifecycle) {
-    AgentLifecycle.OFFLINE -> "离线"
-    AgentLifecycle.IDLE -> "空闲"
-    AgentLifecycle.STARTING -> "正在启动"
-    AgentLifecycle.RUNNING -> "正在运行"
-    AgentLifecycle.WAITING_APPROVAL -> "等待批准"
-    AgentLifecycle.WAITING_ANSWER -> "等待回答"
-    AgentLifecycle.SUCCEEDED -> "任务完成"
-    AgentLifecycle.INTERRUPTED -> "已中断"
-}
-
 private fun statusColor(task: TaskSnapshot): Color =
     lifecycleColor(task.lifecycle, task.activity)
 
@@ -1090,7 +1079,7 @@ private fun lifecycleColor(
         AgentActivity.EDITING -> AgentGridColors.Indigo
         AgentActivity.EXECUTING -> AgentGridColors.Orange
         AgentActivity.TESTING -> AgentGridColors.Blue
-        else -> AgentGridColors.Violet
+        else -> AgentGridColors.Magenta
     }
 }
 
@@ -1108,18 +1097,6 @@ private fun agentOriginLabel(source: AgentSource): String = when (source) {
     AgentSource.CODEX_DESKTOP -> "ChatGPT.app"
     AgentSource.CODEX_CLI -> "Terminal"
     AgentSource.CLAUDE_CODE -> "Claude Code"
-}
-
-private fun activityText(activity: AgentActivity?): String = when (activity) {
-    AgentActivity.THINKING -> "正在思考"
-    AgentActivity.READING -> "正在读取"
-    AgentActivity.SEARCHING -> "正在搜索"
-    AgentActivity.EDITING -> "正在编辑"
-    AgentActivity.EXECUTING -> "正在执行"
-    AgentActivity.TESTING -> "正在测试"
-    AgentActivity.BROWSING -> "正在浏览"
-    AgentActivity.DELEGATING -> "正在协作"
-    null -> "等待新步骤"
 }
 
 private fun formatElapsed(milliseconds: Long): String {

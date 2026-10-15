@@ -295,7 +295,7 @@ object PixelPalette {
             AgentActivity.DELEGATING,
             AgentActivity.THINKING,
             null,
-            -> Color.rgb(167, 139, 250)
+            -> Color.rgb(232, 121, 249)
         }
     }
 

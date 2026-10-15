@@ -70,6 +70,12 @@ public struct TaskStore: Sendable {
                now.timeIntervalSince(task.updatedAt) >= syntheticRetention {
                 return true
             }
+            // SessionEnd/启动超时会进入 offline；它不是可恢复的活跃任务，
+            // 也没有 completedAt，必须使用最后活动时间收敛，否则会永久留在列表。
+            if task.lifecycle == .offline,
+               now.timeIntervalSince(task.updatedAt) > retention {
+                return true
+            }
             guard task.isTerminal, let completedAt = task.completedAt else {
                 return false
             }
@@ -93,6 +99,7 @@ public struct TaskStore: Sendable {
     @discardableResult
     public mutating func interruptOrphanedCodexTasks(
         existingSessionIDs: Set<String>,
+        liveSessionIDs: Set<String>? = nil,
         now: Date = .now,
         gracePeriod: TimeInterval = 10 * 60
     ) -> Bool {
@@ -101,8 +108,12 @@ public struct TaskStore: Sendable {
             let task = tasks[index]
             guard task.source == .codexDesktop || task.source == .codexCLI,
                   task.lifecycle == .starting || task.lifecycle == .running,
-                  now.timeIntervalSince(task.updatedAt) >= gracePeriod,
-                  !existingSessionIDs.contains(task.id) else {
+                  now.timeIntervalSince(task.updatedAt) >= gracePeriod else {
+                continue
+            }
+            let missingRollout = !existingSessionIDs.contains(task.id)
+            let stoppedWriter = liveSessionIDs.map { !$0.contains(task.id) } ?? false
+            guard missingRollout || stoppedWriter else {
                 continue
             }
 
@@ -113,6 +124,79 @@ public struct TaskStore: Sendable {
             tasks[index].isUnread = true
             tasks[index].capabilities = []
             changed = true
+        }
+        return changed
+    }
+
+    /// 用 Claude 会话文件纠正丢失/乱序 Hook 导致的僵尸状态。
+    @discardableResult
+    public mutating func reconcileClaudeTasks(
+        evidenceBySessionID: [String: ClaudeTranscriptEvidence],
+        now: Date = .now,
+        startingGracePeriod: TimeInterval = 2 * 60,
+        inactivityGracePeriod: TimeInterval = 10 * 60
+    ) -> Bool {
+        var changed = false
+        for index in tasks.indices {
+            let task = tasks[index]
+            guard task.source == .claudeCode,
+                  task.lifecycle == .starting || task.lifecycle == .running else {
+                continue
+            }
+            let evidence = evidenceBySessionID[task.id]
+
+            // Transcript 的 stop_hook_summary 是 Claude Desktop/Code 已结束本轮
+            // 的持久证据，即使随后有迟到 Hook 刷新了 task.updatedAt 也应收敛。
+            if let completedAt = evidence?.completedAt,
+               completedAt >= task.startedAt {
+                tasks[index].lifecycle = .succeeded
+                tasks[index].activity = nil
+                tasks[index].completedAt = completedAt
+                tasks[index].isUnread = true
+                tasks[index].capabilities = []
+                changed = true
+                continue
+            }
+
+            // UserPromptSubmit Hook 偶尔会被 Desktop 的预热路径漏掉；会话文件
+            // 中出现了尚未 Stop 的用户轮次时，直接从 STARTING 纠正为 RUNNING。
+            if task.lifecycle == .starting, evidence?.hasOpenTurn == true,
+               (evidence?.lastActivityAt ?? .distantPast) >= task.startedAt {
+                tasks[index].lifecycle = .running
+                tasks[index].activity = .thinking
+                tasks[index].updatedAt = max(
+                    task.updatedAt,
+                    evidence?.lastActivityAt ?? task.updatedAt
+                )
+                tasks[index].completedAt = nil
+                tasks[index].capabilities = []
+                changed = true
+                continue
+            }
+
+            if task.lifecycle == .starting,
+               now.timeIntervalSince(task.updatedAt) >= startingGracePeriod {
+                tasks[index].lifecycle = .offline
+                tasks[index].activity = nil
+                tasks[index].capabilities = []
+                changed = true
+                continue
+            }
+
+            let lastEvidenceAt = evidence?.lastActivityAt ?? evidence?.modificationDate
+            let lastKnownActivity = max(task.updatedAt, lastEvidenceAt ?? task.updatedAt)
+            if task.lifecycle == .running,
+               evidence == nil,
+               now.timeIntervalSince(lastKnownActivity) >= inactivityGracePeriod {
+                // Silence alone is not proof that an existing Claude turn
+                // stopped: Bash tools and model calls can run for a long time.
+                tasks[index].lifecycle = .interrupted
+                tasks[index].activity = nil
+                tasks[index].completedAt = lastKnownActivity
+                tasks[index].isUnread = true
+                tasks[index].capabilities = []
+                changed = true
+            }
         }
         return changed
     }

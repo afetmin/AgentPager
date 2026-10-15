@@ -71,6 +71,28 @@ public struct CodexRolloutReader: Sendable {
         !trackedFiles.isEmpty
     }
 
+    func sessionIDs(
+        withOpenTranscriptPaths paths: Set<String>,
+        matching sessionIDs: Set<String>
+    ) -> Set<String> {
+        var live = Set(trackedFiles.values.compactMap { tracked -> String? in
+            guard tracked.subagentID == nil,
+                  sessionIDs.contains(tracked.sessionID),
+                  paths.contains(tracked.url.standardizedFileURL.path) else {
+                return nil
+            }
+            return tracked.sessionID
+        })
+        // Restored tasks may not have been tracked since this Bridge started.
+        for path in paths {
+            let filename = URL(fileURLWithPath: path).lastPathComponent
+            for sessionID in sessionIDs where filename.contains(sessionID) {
+                live.insert(sessionID)
+            }
+        }
+        return live
+    }
+
     public func existingSessionIDs(
         in sessionsRoot: URL,
         matching sessionIDs: Set<String>

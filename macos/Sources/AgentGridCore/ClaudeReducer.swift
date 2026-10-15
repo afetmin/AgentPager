@@ -10,6 +10,12 @@ public enum ClaudeEventReducer {
         existing: TaskSnapshot?,
         now: Date = .now
     ) -> TaskSnapshot {
+        if let existing,
+           existing.isTerminal,
+           hook.event != .userPromptSubmit {
+            return existing
+        }
+
         var task = existing ?? TaskSnapshot(
             id: hook.sessionID,
             source: .claudeCode,
@@ -24,14 +30,22 @@ public enum ClaudeEventReducer {
 
         switch hook.event {
         case .sessionStart:
-            task.lifecycle = .starting
-            task.activity = .thinking
-            task.completedAt = nil
-            task.capabilities = []
+            // Desktop 的 prewarm/resume 可能在会话已经运行后迟到。只有首次
+            // SessionStart 或离线会话恢复时才展示启动态。
+            if existing == nil || task.lifecycle == .offline || task.lifecycle == .idle {
+                task.lifecycle = .starting
+                task.activity = .thinking
+                task.completedAt = nil
+                task.capabilities = []
+            }
         case .userPromptSubmit:
             task.lifecycle = .running
             task.activity = .thinking
+            task.startedAt = now
             task.completedAt = nil
+            task.latestStep = nil
+            task.isUnread = false
+            task.subagents = []
             if let prompt = CodexEventReducer.normalized(hook.prompt) {
                 task.userPrompt = prompt
                 if existing == nil || task.title == task.projectName {
@@ -43,19 +57,28 @@ public enum ClaudeEventReducer {
             }
             task.capabilities = []
         case .preToolUse:
-            task.lifecycle = .running
-            task.activity = CodexEventReducer.activity(for: hook.toolName)
+            task.lifecycle = isQuestionTool(hook.toolName) ? .waitingAnswer : .running
+            task.activity = isQuestionTool(hook.toolName) ? .thinking : activity(for: hook)
             task.completedAt = nil
             task.latestStep = latestStep(
                 toolName: hook.toolName,
                 summary: summary(from: hook.toolInput)
             )
             task.capabilities = []
-        case .postToolUse, .postToolUseFailure, .preCompact:
+        case .postToolUse, .postToolUseFailure:
+            // The user may approve on the computer rather than the phone. A
+            // real tool result is proof that its approval wait has ended.
             task.lifecycle = .running
             task.activity = .thinking
             task.completedAt = nil
             task.capabilities = []
+        case .preCompact:
+            if !isWaiting(task.lifecycle) {
+                task.lifecycle = .running
+                task.activity = .thinking
+                task.completedAt = nil
+                task.capabilities = []
+            }
         case .permissionRequest:
             task.lifecycle = .waitingApproval
             task.activity = .executing
@@ -89,11 +112,7 @@ public enum ClaudeEventReducer {
             task.isUnread = true
             task.capabilities = []
         case .stopFailure:
-            // Stop 失败时保持当前运行态，不误标为完成。
-            if task.lifecycle == .succeeded {
-                task.lifecycle = .running
-                task.completedAt = nil
-            }
+            // Stop 失败只说明 Stop Hook 自身失败，不能证明任务重新运行。
             task.capabilities = []
         case .sessionEnd:
             if !task.isTerminal {
@@ -106,12 +125,14 @@ public enum ClaudeEventReducer {
             // Claude 子代理通过 SubagentStart/SubagentStop 事件显式建模，
             // 与 Codex 的 rollout 子代理路径一致。
             applySubagent(hook, task: &task, now: now)
-            task.lifecycle = .running
-            task.completedAt = nil
-            task.activity = task.subagents.contains { !$0.isTerminal }
-                ? .delegating
-                : .thinking
-            task.capabilities = []
+            if !isWaiting(task.lifecycle) {
+                task.lifecycle = .running
+                task.completedAt = nil
+                task.activity = task.subagents.contains { !$0.isTerminal }
+                    ? .delegating
+                    : .thinking
+                task.capabilities = []
+            }
         case nil:
             // 未知事件：只刷新时间戳，不改变生命周期，避免误判。
             task.updatedAt = now
@@ -119,10 +140,36 @@ public enum ClaudeEventReducer {
         return task
     }
 
+    private static func isWaiting(_ lifecycle: AgentLifecycle) -> Bool {
+        lifecycle == .waitingApproval || lifecycle == .waitingAnswer
+    }
+
+    static func isQuestionTool(_ name: String?) -> Bool {
+        name?.lowercased() == "askuserquestion"
+    }
+
+    private static func activity(for hook: ClaudeHookPayload) -> AgentActivity {
+        switch hook.toolName?.lowercased() {
+        case "glob":
+            return .searching
+        case "task", "agent":
+            return .delegating
+        case "bash" where ToolStepSanitizer.isTestCommand(summary(from: hook.toolInput)):
+            return .testing
+        default:
+            return CodexEventReducer.activity(for: hook.toolName)
+        }
+    }
+
     /// 从 Claude 的任意 `tool_input` JSON 中提取最具信息量的字段。
     public static func summary(from toolInput: HookJSONValue?) -> String? {
         guard case let .object(obj) = toolInput else {
             return CodexEventReducer.stringValue(for: toolInput)
+        }
+        if case let .array(questions) = obj["questions"],
+           case let .object(question) = questions.first,
+           case let .string(text) = question["question"] {
+            return text
         }
         let keyPriority = [
             "command", "file_path", "path", "pattern",
