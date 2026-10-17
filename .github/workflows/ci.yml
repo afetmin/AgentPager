@@ -1,0 +1,63 @@
+name: 持续集成
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: macOS 逻辑测试
+    runs-on: macos-26
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v6
+
+      - name: 运行逻辑测试
+        run: swift test
+        working-directory: macos
+
+  android:
+    name: Android 单元测试
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v6
+
+      - name: 配置 JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: 运行单元测试
+        shell: bash
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest
+
+  windows:
+    name: Windows 构建检查
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v6
+
+      - name: 配置 .NET 8
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: 构建解决方案
+        shell: powershell
+        run: dotnet build windows/AgentPager.Windows.sln -c Release
