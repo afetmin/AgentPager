@@ -22,7 +22,13 @@ public final class HookBridgeServer: CodexPermissionResolving, @unchecked Sendab
     }
 
     public func start(port: UInt16 = 49_361) throws {
-        let listener = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: port)!)
+        // Hook 客户端只会从本机连入；仅绑定回环地址，避免局域网内其他设备伪造事件。
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = .hostPort(
+            host: .ipv4(.loopback),
+            port: NWEndpoint.Port(rawValue: port)!
+        )
+        let listener = try NWListener(using: parameters)
         listener.newConnectionHandler = { [weak self] connection in
             self?.accept(connection)
         }
@@ -94,48 +100,35 @@ public final class HookBridgeServer: CodexPermissionResolving, @unchecked Sendab
     }
 
     private func handle(_ data: Data, connection: NWConnection) {
+        // 无法识别来源时按 Codex 兼容旧 CLI；解析失败则直接断开，不阻塞 Agent。
         let envelope = decodeEnvelope(data)
+            ?? (try? JSONDecoder().decode(CodexHookPayload.self, from: data))
+            .map(HookEnvelope.codex)
+        guard let envelope else {
+            connection.cancel()
+            return
+        }
 
+        eventHandler(envelope)
+
+        let sessionID: String
+        let source: HookSource
+        let isPermissionRequest: Bool
         switch envelope {
         case let .codex(payload):
-            // Codex 走原有路径；旧版 CLI 未带信封时也落到这里。
-            eventHandler(.codex(payload))
-            if payload.hookEventName == .permissionRequest {
-                holdForApproval(
-                    sessionID: payload.sessionID,
-                    source: .codex,
-                    connection: connection
-                )
-            } else {
-                acknowledge(connection)
-            }
+            sessionID = payload.sessionID
+            source = .codex
+            isPermissionRequest = payload.hookEventName == .permissionRequest
         case let .claude(payload):
-            eventHandler(.claude(payload))
-            if payload.event == .permissionRequest {
-                holdForApproval(
-                    sessionID: payload.sessionID,
-                    source: .claude,
-                    connection: connection
-                )
-            } else {
-                acknowledge(connection)
-            }
-        case nil:
-            // 无法识别来源时按 Codex 兼容旧 CLI；解析失败则放行不阻塞。
-            if let payload = try? JSONDecoder().decode(CodexHookPayload.self, from: data) {
-                eventHandler(.codex(payload))
-                if payload.hookEventName == .permissionRequest {
-                    holdForApproval(
-                        sessionID: payload.sessionID,
-                        source: .codex,
-                        connection: connection
-                    )
-                } else {
-                    acknowledge(connection)
-                }
-            } else {
-                connection.cancel()
-            }
+            sessionID = payload.sessionID
+            source = .claude
+            isPermissionRequest = payload.event == .permissionRequest
+        }
+
+        if isPermissionRequest {
+            holdForApproval(sessionID: sessionID, source: source, connection: connection)
+        } else {
+            acknowledge(connection)
         }
     }
 
@@ -144,8 +137,30 @@ public final class HookBridgeServer: CodexPermissionResolving, @unchecked Sendab
         source: HookSource,
         connection: NWConnection
     ) {
-        lock.withLock {
-            pending[sessionID] = (connection: connection, source: source)
+        // 同一会话的新请求会取代旧请求；旧连接必须关闭，否则对应 Hook 进程会一直挂起。
+        let previous = lock.withLock {
+            let previous = pending.updateValue((connection: connection, source: source), forKey: sessionID)
+            return previous?.connection
+        }
+        previous?.cancel()
+        watchForDisconnect(sessionID: sessionID, connection: connection)
+    }
+
+    /// Hook 进程提前退出（用户在电脑端处理、超时等）时释放挂起的权限请求。
+    private func watchForDisconnect(sessionID: String, connection: NWConnection) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 1) {
+            [weak self] _, _, isComplete, error in
+            guard let self else { return }
+            if isComplete || error != nil {
+                self.lock.withLock {
+                    if self.pending[sessionID]?.connection === connection {
+                        self.pending.removeValue(forKey: sessionID)
+                    }
+                }
+                connection.cancel()
+            } else {
+                self.watchForDisconnect(sessionID: sessionID, connection: connection)
+            }
         }
     }
 

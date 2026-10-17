@@ -71,25 +71,60 @@ public enum PairingSecretStore {
 }
 
 public enum LocalNetworkAddress {
+    public struct Candidate: Equatable, Sendable {
+        public var interface: String
+        public var address: String
+
+        public init(interface: String, address: String) {
+            self.interface = interface
+            self.address = address
+        }
+    }
+
     public static func preferredIPv4() -> String {
-        var addresses: [String] = []
+        select(from: candidates())
+    }
+
+    /// 选择写入二维码的地址：优先 en0/en1，其次其他以太网/Wi-Fi 接口（如有线网卡 en5），
+    /// 忽略 VPN、虚拟网桥和链路本地地址；都没有时退回回环。
+    public static func select(from candidates: [Candidate]) -> String {
+        let usable = candidates.filter { candidate in
+            !candidate.address.hasPrefix("169.254.") && !candidate.address.hasPrefix("127.")
+        }
+        func rank(_ candidate: Candidate) -> Int? {
+            switch candidate.interface {
+            case "en0": return 0
+            case "en1": return 1
+            default:
+                return candidate.interface.hasPrefix("en") ? 2 : nil
+            }
+        }
+        return usable
+            .compactMap { candidate in rank(candidate).map { (candidate, $0) } }
+            .min { $0.1 < $1.1 }?
+            .0.address ?? "127.0.0.1"
+    }
+
+    private static func candidates() -> [Candidate] {
         var pointer: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&pointer) == 0, let first = pointer else {
-            return "127.0.0.1"
+            return []
         }
         defer { freeifaddrs(pointer) }
 
+        var result: [Candidate] = []
         for cursor in sequence(first: first, next: { $0.pointee.ifa_next }) {
             let interface = cursor.pointee
-            guard interface.ifa_addr.pointee.sa_family == UInt8(AF_INET) else {
+            guard let address = interface.ifa_addr,
+                  address.pointee.sa_family == UInt8(AF_INET),
+                  interface.ifa_flags & UInt32(IFF_UP) != 0,
+                  interface.ifa_flags & UInt32(IFF_LOOPBACK) == 0 else {
                 continue
             }
-            let name = String(cString: interface.ifa_name)
-            guard name == "en0" || name == "en1" else { continue }
             var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
             getnameinfo(
-                interface.ifa_addr,
-                socklen_t(interface.ifa_addr.pointee.sa_len),
+                address,
+                socklen_t(address.pointee.sa_len),
                 &host,
                 socklen_t(host.count),
                 nil,
@@ -97,8 +132,11 @@ public enum LocalNetworkAddress {
                 NI_NUMERICHOST
             )
             let end = host.firstIndex(of: 0) ?? host.endIndex
-            addresses.append(String(decoding: host[..<end].map(UInt8.init(bitPattern:)), as: UTF8.self))
+            result.append(Candidate(
+                interface: String(cString: interface.ifa_name),
+                address: String(decoding: host[..<end].map(UInt8.init(bitPattern:)), as: UTF8.self)
+            ))
         }
-        return addresses.first ?? "127.0.0.1"
+        return result
     }
 }
