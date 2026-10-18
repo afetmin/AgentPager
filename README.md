@@ -17,11 +17,9 @@ AgentPager 将 Codex Desktop、Codex CLI 与 Claude Code 的运行状态通过�
 
 ## 查看效果
 
-<p align="center">
-  <video src="https://github.com/afetmin/AgentPager/raw/main/artifacts/agentpager-intro.mp4" controls muted width="720">
-    你的浏览器不支持内嵌视频，<a href="artifacts/agentpager-intro.mp4">点此下载介绍视频</a>。
-  </video>
-</p>
+<p align="center"><img src="artifacts/agentpager-intro.gif" width="720" alt="AgentPager 介绍视频"></p>
+
+<p align="center">▶ <a href="artifacts/agentpager-intro.mp4">观看带 8-bit 音效的完整视频（MP4，52 秒）</a></p>
 
 <p align="center"><img src="artifacts/converted.gif" width="400" alt="状态更新动画演示"></p>
 
@@ -131,11 +129,9 @@ AgentPager synchronizes the live status of Codex Desktop, Codex CLI, and Claude 
 
 ## See It in Action
 
-<p align="center">
-  <video src="https://github.com/afetmin/AgentPager/raw/main/artifacts/agentpager-intro.mp4" controls muted width="720">
-    Your browser can't play embedded video. <a href="artifacts/agentpager-intro.mp4">Download the intro video</a>.
-  </video>
-</p>
+<p align="center"><img src="artifacts/agentpager-intro.gif" width="720" alt="AgentPager intro video"></p>
+
+<p align="center">▶ <a href="artifacts/agentpager-intro.mp4">Watch the full video with 8-bit sound (MP4, 52s)</a></p>
 
 <p align="center"><img src="artifacts/converted.gif" width="400" alt="Status update animation demo"></p>
 
