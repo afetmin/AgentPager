@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>AgentPager Intro</title>
+<style>
+  html, body { margin: 0; background: #000; overflow: hidden; }
+  canvas { display: block; width: 1920px; height: 1080px; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1920" height="1080"></canvas>
+<script type="module">
+  import { renderFrame } from './scenes.js';
+
+  const ctx = document.getElementById('c').getContext('2d');
+  const assets = { footage: [] };
+
+  async function boot() {
+    const fonts = [
+      new FontFace('Fusion Pixel', 'url(assets/fusion_pixel_12px_zh_hans.ttf)'),
+      new FontFace('Press Start 2P', 'url(assets/press-start-2p-latin-400-normal.woff2)'),
+    ];
+    await Promise.all(fonts.map(async (f) => { await f.load(); document.fonts.add(f); }));
+
+    const N = 134;
+    const imgs = await Promise.all(Array.from({ length: N }, (_, i) => new Promise((res) => {
+      const im = new Image();
+      im.onload = () => res(im);
+      im.onerror = () => res(null);
+      im.src = `assets/footage/f${String(i + 1).padStart(3, '0')}.png`;
+    })));
+    assets.footage = imgs.filter(Boolean);
+
+    window.renderAt = (t) => { renderFrame(ctx, t, assets); return true; };
+    window.__ready = true;
+  }
+  boot();
+</script>
+</body>
+</html>

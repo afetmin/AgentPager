@@ -1,0 +1,13 @@
+{
+  "name": "agentpager-intro-video",
+  "private": true,
+  "type": "module",
+  "description": "AgentPager 介绍视频的源码：Canvas 逐帧渲染 + 8-bit 合成音轨 + ffmpeg 合成",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@fontsource/press-start-2p": "5.2.5",
+    "puppeteer-core": "24.10.0"
+  }
+}
