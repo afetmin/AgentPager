@@ -1,17 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
   <title id="title">AgentPager 图标</title>
-  <desc id="desc">像素任务核心向右上方发出提醒信号</desc>
+  <desc id="desc">像素任务核心的橙色角格向右上方发出两层提醒信号</desc>
   <rect x="64" y="64" width="896" height="896" rx="196" fill="#090B10"/>
   <g shape-rendering="crispEdges">
-    <rect x="148" y="372" width="132" height="132" fill="#4E8CFF"/>
-    <rect x="316" y="372" width="132" height="132" fill="#4E8CFF"/>
-    <rect x="484" y="372" width="132" height="132" fill="#FF744F"/>
-    <rect x="148" y="540" width="132" height="132" fill="#4E8CFF"/>
-    <rect x="484" y="540" width="132" height="132" fill="#4E8CFF"/>
-    <rect x="148" y="708" width="132" height="132" fill="#35BDAA"/>
-    <rect x="316" y="708" width="132" height="132" fill="#4E8CFF"/>
-    <rect x="484" y="708" width="132" height="132" fill="#4E8CFF"/>
+    <rect x="164" y="348" width="144" height="144" fill="#4E8CFF"/>
+    <rect x="348" y="348" width="144" height="144" fill="#4E8CFF"/>
+    <rect x="532" y="348" width="144" height="144" fill="#FF744F"/>
+    <rect x="164" y="532" width="144" height="144" fill="#4E8CFF"/>
+    <rect x="532" y="532" width="144" height="144" fill="#4E8CFF"/>
+    <rect x="164" y="716" width="144" height="144" fill="#35BDAA"/>
+    <rect x="348" y="716" width="144" height="144" fill="#4E8CFF"/>
+    <rect x="532" y="716" width="144" height="144" fill="#4E8CFF"/>
   </g>
-  <path d="M622 274H776V430H724V326H622Z" fill="#FF744F"/>
-  <path d="M622 164H886V430H834V216H622Z" fill="#FF744F"/>
+  <path d="M532 256H768V492H716V308H532Z" fill="#FF744F"/>
+  <path d="M532 164H860V492H808V216H532Z" fill="#FF744F"/>
 </svg>

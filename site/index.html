@@ -6,7 +6,7 @@
 <title>AgentPager · 让闲置 Android 手机成为 AI Agent 的专属状态终端</title>
 <meta name="description" content="AgentPager 将 Codex 的运行状态通过局域网实时同步到旧 Android 手机，抬眼就能看到 Agent 在做什么、是否完成、何时需要你批准。">
 <link rel="stylesheet" href="pixel-grid/pixel-grid.full.css">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1024 1024'%3E%3Crect x='64' y='64' width='896' height='896' rx='196' fill='%23090B10'/%3E%3Cg shape-rendering='crispEdges'%3E%3Crect x='148' y='372' width='132' height='132' fill='%234E8CFF'/%3E%3Crect x='316' y='372' width='132' height='132' fill='%234E8CFF'/%3E%3Crect x='484' y='372' width='132' height='132' fill='%23FF744F'/%3E%3Crect x='148' y='540' width='132' height='132' fill='%234E8CFF'/%3E%3Crect x='484' y='540' width='132' height='132' fill='%234E8CFF'/%3E%3Crect x='148' y='708' width='132' height='132' fill='%2335BDAA'/%3E%3Crect x='316' y='708' width='132' height='132' fill='%234E8CFF'/%3E%3Crect x='484' y='708' width='132' height='132' fill='%234E8CFF'/%3E%3C/g%3E%3Cpath d='M622 274H776V430H724V326H622Z' fill='%23FF744F'/%3E%3Cpath d='M622 164H886V430H834V216H622Z' fill='%23FF744F'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1024 1024'%3E%3Crect x='64' y='64' width='896' height='896' rx='196' fill='%23090B10'/%3E%3Cg shape-rendering='crispEdges'%3E%3Crect x='164' y='348' width='144' height='144' fill='%234E8CFF'/%3E%3Crect x='348' y='348' width='144' height='144' fill='%234E8CFF'/%3E%3Crect x='532' y='348' width='144' height='144' fill='%23FF744F'/%3E%3Crect x='164' y='532' width='144' height='144' fill='%234E8CFF'/%3E%3Crect x='532' y='532' width='144' height='144' fill='%234E8CFF'/%3E%3Crect x='164' y='716' width='144' height='144' fill='%2335BDAA'/%3E%3Crect x='348' y='716' width='144' height='144' fill='%234E8CFF'/%3E%3Crect x='532' y='716' width='144' height='144' fill='%234E8CFF'/%3E%3C/g%3E%3Cpath d='M532 256H768V492H716V308H532Z' fill='%23FF744F'/%3E%3Cpath d='M532 164H860V492H808V216H532Z' fill='%23FF744F'/%3E%3C/svg%3E">
 <style>
 /* ============ 字体 ============ */
 @font-face{
@@ -246,11 +246,11 @@ footer{border-top:3px solid var(--divider);padding:48px 0 64px;background:var(--
     <a class="logo" href="#top">
       <svg width="26" height="26" viewBox="0 0 1024 1024" shape-rendering="crispEdges" aria-hidden="true">
         <rect x="64" y="64" width="896" height="896" rx="196" fill="#090B10"/>
-        <rect x="148" y="372" width="132" height="132" fill="#4E8CFF"/><rect x="316" y="372" width="132" height="132" fill="#4E8CFF"/>
-        <rect x="484" y="372" width="132" height="132" fill="#FF744F"/><rect x="148" y="540" width="132" height="132" fill="#4E8CFF"/>
-        <rect x="484" y="540" width="132" height="132" fill="#4E8CFF"/><rect x="148" y="708" width="132" height="132" fill="#35BDAA"/>
-        <rect x="316" y="708" width="132" height="132" fill="#4E8CFF"/><rect x="484" y="708" width="132" height="132" fill="#4E8CFF"/>
-        <path d="M622 274H776V430H724V326H622Z" fill="#FF744F"/><path d="M622 164H886V430H834V216H622Z" fill="#FF744F"/>
+        <rect x="164" y="348" width="144" height="144" fill="#4E8CFF"/><rect x="348" y="348" width="144" height="144" fill="#4E8CFF"/>
+        <rect x="532" y="348" width="144" height="144" fill="#FF744F"/><rect x="164" y="532" width="144" height="144" fill="#4E8CFF"/>
+        <rect x="532" y="532" width="144" height="144" fill="#4E8CFF"/><rect x="164" y="716" width="144" height="144" fill="#35BDAA"/>
+        <rect x="348" y="716" width="144" height="144" fill="#4E8CFF"/><rect x="532" y="716" width="144" height="144" fill="#4E8CFF"/>
+        <path d="M532 256H768V492H716V308H532Z" fill="#FF744F"/><path d="M532 164H860V492H808V216H532Z" fill="#FF744F"/>
       </svg>
       <span class="en" style="font-size:13px;">AgentPager</span>
     </a>
@@ -517,11 +517,11 @@ footer{border-top:3px solid var(--divider);padding:48px 0 64px;background:var(--
       <div class="foot-logo">
         <svg width="34" height="34" viewBox="0 0 1024 1024" shape-rendering="crispEdges" aria-hidden="true">
           <rect x="64" y="64" width="896" height="896" rx="196" fill="#090B10"/>
-          <rect x="148" y="372" width="132" height="132" fill="#4E8CFF"/><rect x="316" y="372" width="132" height="132" fill="#4E8CFF"/>
-          <rect x="484" y="372" width="132" height="132" fill="#FF744F"/><rect x="148" y="540" width="132" height="132" fill="#4E8CFF"/>
-          <rect x="484" y="540" width="132" height="132" fill="#4E8CFF"/><rect x="148" y="708" width="132" height="132" fill="#35BDAA"/>
-          <rect x="316" y="708" width="132" height="132" fill="#4E8CFF"/><rect x="484" y="708" width="132" height="132" fill="#4E8CFF"/>
-          <path d="M622 274H776V430H724V326H622Z" fill="#FF744F"/><path d="M622 164H886V430H834V216H622Z" fill="#FF744F"/>
+          <rect x="164" y="348" width="144" height="144" fill="#4E8CFF"/><rect x="348" y="348" width="144" height="144" fill="#4E8CFF"/>
+          <rect x="532" y="348" width="144" height="144" fill="#FF744F"/><rect x="164" y="532" width="144" height="144" fill="#4E8CFF"/>
+          <rect x="532" y="532" width="144" height="144" fill="#4E8CFF"/><rect x="164" y="716" width="144" height="144" fill="#35BDAA"/>
+          <rect x="348" y="716" width="144" height="144" fill="#4E8CFF"/><rect x="532" y="716" width="144" height="144" fill="#4E8CFF"/>
+          <path d="M532 256H768V492H716V308H532Z" fill="#FF744F"/><path d="M532 164H860V492H808V216H532Z" fill="#FF744F"/>
         </svg>
         <div>
           <div class="en" style="font-size:13px;">AgentPager</div>
