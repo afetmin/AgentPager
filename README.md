@@ -17,6 +17,12 @@ AgentPager 将 Codex Desktop、Codex CLI 与 Claude Code 的运行状态通过�
 
 ## 查看效果
 
+<p align="center">
+  <video src="https://github.com/afetmin/AgentPager/raw/main/artifacts/agentpager-intro.mp4" controls muted width="720">
+    你的浏览器不支持内嵌视频，<a href="artifacts/agentpager-intro.mp4">点此下载介绍视频</a>。
+  </video>
+</p>
+
 <p align="center"><img src="artifacts/converted.gif" width="400" alt="状态更新动画演示"></p>
 
 
@@ -124,6 +130,12 @@ Windows 首版支持原生 Codex（PowerShell 环境），暂不支持 Codex 运
 AgentPager synchronizes the live status of Codex Desktop, Codex CLI, and Claude Code to an old Android phone. Place the phone horizontally on your desk and it becomes an always-on, quiet agent console that gets your attention when it matters.
 
 ## See It in Action
+
+<p align="center">
+  <video src="https://github.com/afetmin/AgentPager/raw/main/artifacts/agentpager-intro.mp4" controls muted width="720">
+    Your browser can't play embedded video. <a href="artifacts/agentpager-intro.mp4">Download the intro video</a>.
+  </video>
+</p>
 
 <p align="center"><img src="artifacts/converted.gif" width="400" alt="Status update animation demo"></p>
 
