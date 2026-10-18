@@ -17,7 +17,7 @@ android {
 
     defaultConfig {
         applicationId = "com.agentgrid.mobile"
-        minSdk = 29
+        minSdk = 26
         targetSdk = 36
         versionCode = providers.environmentVariable("AGENTPAGER_VERSION_CODE")
             .orNull
