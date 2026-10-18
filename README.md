@@ -57,9 +57,9 @@ AgentPager 将 Codex Desktop、Codex CLI 与 Claude Code 的运行状态通过�
 
 按平台下载安装包：
 
-- [AgentPager.apk（v0.3.4）](https://github.com/afetmin/AgentPager/releases/download/v0.3.4/AgentPager.apk)：安装到 Android 8.0（API 26）或更高版本的手机、电视或机顶盒。电视没有摄像头时无法扫码，请在配对页粘贴 Mac 端的“复制配对文本”
-- [AgentPager-macOS.dmg（v0.3.4）](https://github.com/afetmin/AgentPager/releases/download/v0.3.4/AgentPager-macOS.dmg)：安装到 macOS 14 或更高版本的 Mac
-- [AgentPager-Windows-Setup.exe（v0.3.4）](https://github.com/afetmin/AgentPager/releases/download/v0.3.4/AgentPager-Windows-Setup.exe)：安装到 Windows 10/11 x64
+- [AgentPager.apk（v0.3.5）](https://github.com/afetmin/AgentPager/releases/download/v0.3.5/AgentPager.apk)：安装到 Android 8.0（API 26）或更高版本的手机、电视或机顶盒。电视没有摄像头时无法扫码，请在配对页粘贴 Mac 端的“复制配对文本”
+- [AgentPager-macOS.dmg（v0.3.5）](https://github.com/afetmin/AgentPager/releases/download/v0.3.5/AgentPager-macOS.dmg)：安装到 macOS 14 或更高版本的 Mac
+- [AgentPager-Windows-Setup.exe（v0.3.5）](https://github.com/afetmin/AgentPager/releases/download/v0.3.5/AgentPager-Windows-Setup.exe)：安装到 Windows 10/11 x64
 
 
 > 未经 Apple 公证的版本首次启动时，需要在 macOS“系统设置 → 隐私与安全性”中确认打开。
@@ -166,9 +166,9 @@ That is how AgentPager came to be: putting an idle phone back to work as a genui
 
 Download the installer for your platform:
 
-- [AgentPager.apk (v0.3.4)](https://github.com/afetmin/AgentPager/releases/download/v0.3.4/AgentPager.apk): Install on a phone, TV, or set-top box running Android 8.0 (API 26) or later. Devices without a camera, such as TVs, cannot scan the QR code; paste the text from the Mac app's "Copy pairing text" button on the pairing screen instead.
-- [AgentPager-macOS.dmg (v0.3.4)](https://github.com/afetmin/AgentPager/releases/download/v0.3.4/AgentPager-macOS.dmg): Install on a Mac running macOS 14 or later.
-- [AgentPager-Windows-Setup.exe (v0.3.4)](https://github.com/afetmin/AgentPager/releases/download/v0.3.4/AgentPager-Windows-Setup.exe): Install on a Windows 10/11 x64 PC.
+- [AgentPager.apk (v0.3.5)](https://github.com/afetmin/AgentPager/releases/download/v0.3.5/AgentPager.apk): Install on a phone, TV, or set-top box running Android 8.0 (API 26) or later. Devices without a camera, such as TVs, cannot scan the QR code; paste the text from the Mac app's "Copy pairing text" button on the pairing screen instead.
+- [AgentPager-macOS.dmg (v0.3.5)](https://github.com/afetmin/AgentPager/releases/download/v0.3.5/AgentPager-macOS.dmg): Install on a Mac running macOS 14 or later.
+- [AgentPager-Windows-Setup.exe (v0.3.5)](https://github.com/afetmin/AgentPager/releases/download/v0.3.5/AgentPager-Windows-Setup.exe): Install on a Windows 10/11 x64 PC.
 
 > For the non-notarized build, confirm that you want to open it in macOS **System Settings > Privacy & Security** the first time you launch it.
 >
