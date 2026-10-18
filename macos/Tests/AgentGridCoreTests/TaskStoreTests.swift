@@ -76,6 +76,30 @@ func terminalTasksUseOneHourDefaultRetention() {
     #expect(store.tasks.map(\.id) == ["recent"])
 }
 
+@Test("离线任务按最后活动时间清理")
+func offlineTasksUseRetentionFromLastActivity() {
+    let now = Date(timeIntervalSince1970: 25_000)
+    let recent = TaskSnapshot(
+        id: "recent-offline",
+        source: .claudeCode,
+        projectName: "Claude",
+        lifecycle: .offline,
+        updatedAt: now.addingTimeInterval(-3_600)
+    )
+    let expired = TaskSnapshot(
+        id: "expired-offline",
+        source: .claudeCode,
+        projectName: "Claude",
+        lifecycle: .offline,
+        updatedAt: now.addingTimeInterval(-3_601)
+    )
+    var store = TaskStore(tasks: [recent, expired])
+
+    store.purge(now: now)
+
+    #expect(store.tasks.map(\.id) == ["recent-offline"])
+}
+
 @Test("过期的测试与模拟任务会自动清理")
 func staleSyntheticTasksArePurged() {
     let now = Date(timeIntervalSince1970: 20_000)

@@ -73,14 +73,43 @@ public struct PersistentTaskCatalog: Sendable {
 
     public mutating func reconcileCodexSessions(
         existingSessionIDs: Set<String>,
+        liveSessionIDs: Set<String>? = nil,
         now: Date = .now,
         gracePeriod: TimeInterval = 10 * 60
     ) -> TaskCatalogCommit? {
         guard catalog.reconcileCodexSessions(
             existingSessionIDs: existingSessionIDs,
+            liveSessionIDs: liveSessionIDs,
             now: now,
             gracePeriod: gracePeriod
         ) else {
+            return nil
+        }
+        return commit()
+    }
+
+    public mutating func reconcileClaudeSessions(
+        evidenceBySessionID: [String: ClaudeTranscriptEvidence],
+        now: Date = .now,
+        startingGracePeriod: TimeInterval = 2 * 60,
+        inactivityGracePeriod: TimeInterval = 10 * 60
+    ) -> TaskCatalogCommit? {
+        guard catalog.reconcileClaudeSessions(
+            evidenceBySessionID: evidenceBySessionID,
+            now: now,
+            startingGracePeriod: startingGracePeriod,
+            inactivityGracePeriod: inactivityGracePeriod
+        ) else {
+            return nil
+        }
+        return commit()
+    }
+
+    public mutating func expirePendingRequest(
+        sessionID: String,
+        now: Date = .now
+    ) -> TaskCatalogCommit? {
+        guard catalog.expirePendingRequest(sessionID: sessionID, now: now) else {
             return nil
         }
         return commit()

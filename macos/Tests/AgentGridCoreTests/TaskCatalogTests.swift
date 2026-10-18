@@ -334,6 +334,281 @@ func recentOrphanUsesLastActivityForTerminalRetention() throws {
     #expect(interrupted.isUnread)
 }
 
+@Test("Claude 会话核对会收敛启动、完成与失活任务")
+func claudeSessionReconciliationConvergesLifecycle() throws {
+    let now = Date(timeIntervalSince1970: 50_000)
+    let old = now.addingTimeInterval(-700)
+    let tasks = [
+        TaskSnapshot(
+            id: "starting-timeout",
+            source: .claudeCode,
+            projectName: "Claude",
+            lifecycle: .starting,
+            activity: .thinking,
+            startedAt: old,
+            updatedAt: old
+        ),
+        TaskSnapshot(
+            id: "starting-open",
+            source: .claudeCode,
+            projectName: "Claude",
+            lifecycle: .starting,
+            activity: .thinking,
+            startedAt: old,
+            updatedAt: now.addingTimeInterval(-130)
+        ),
+        TaskSnapshot(
+            id: "stopped",
+            source: .claudeCode,
+            projectName: "Claude",
+            lifecycle: .running,
+            activity: .thinking,
+            startedAt: old,
+            updatedAt: now.addingTimeInterval(-2)
+        ),
+        TaskSnapshot(
+            id: "stale",
+            source: .claudeCode,
+            projectName: "Claude",
+            lifecycle: .running,
+            activity: .thinking,
+            startedAt: old,
+            updatedAt: old
+        ),
+    ]
+    let stoppedAt = now.addingTimeInterval(-5)
+    var catalog = TaskCatalog(restoring: tasks)
+
+    let changed = catalog.reconcileClaudeSessions(
+        evidenceBySessionID: [
+            "starting-open": ClaudeTranscriptEvidence(
+                sessionID: "starting-open",
+                modificationDate: now,
+                lastActivityAt: now,
+                completedAt: nil,
+                hasOpenTurn: true
+            ),
+            "stopped": ClaudeTranscriptEvidence(
+                sessionID: "stopped",
+                modificationDate: now,
+                lastActivityAt: stoppedAt,
+                completedAt: stoppedAt,
+                hasOpenTurn: false
+            ),
+        ],
+        now: now
+    )
+
+    #expect(changed)
+    let byID = Dictionary(uniqueKeysWithValues: catalog.projection().tasks.map { ($0.id, $0) })
+    #expect(byID["starting-timeout"]?.lifecycle == .offline)
+    #expect(byID["starting-open"]?.lifecycle == .running)
+    #expect(byID["stopped"]?.lifecycle == .succeeded)
+    #expect(byID["stopped"]?.completedAt == stoppedAt)
+    #expect(byID["stale"]?.lifecycle == .interrupted)
+}
+
+@Test("Claude 等待状态不会被普通存活核对清除")
+func claudeSessionReconciliationPreservesWaitingTasks() {
+    let now = Date(timeIntervalSince1970: 60_000)
+    let waiting = TaskSnapshot(
+        id: "waiting",
+        source: .claudeCode,
+        projectName: "Claude",
+        lifecycle: .waitingApproval,
+        activity: .executing,
+        updatedAt: now.addingTimeInterval(-10_000),
+        capabilities: [.approve, .deny]
+    )
+    var catalog = TaskCatalog(
+        restoring: [waiting],
+        pendingRequests: [PendingRequest(taskID: "waiting", kind: .approval, summary: nil)]
+    )
+
+    let changed = catalog.reconcileClaudeSessions(
+        evidenceBySessionID: [:],
+        now: now
+    )
+
+    #expect(!changed)
+    #expect(catalog.projection().tasks.first?.lifecycle == .waitingApproval)
+    #expect(catalog.projection().pendingRequests.count == 1)
+}
+
+@Test("审批连接超时后清除待办并结束等待状态")
+func pendingApprovalExpirationInterruptsTask() throws {
+    let now = Date(timeIntervalSince1970: 70_000)
+    let waiting = TaskSnapshot(
+        id: "waiting",
+        source: .claudeCode,
+        projectName: "Claude",
+        lifecycle: .waitingApproval,
+        activity: .executing,
+        startedAt: now.addingTimeInterval(-60),
+        updatedAt: now.addingTimeInterval(-1),
+        capabilities: [.approve, .deny]
+    )
+    var catalog = TaskCatalog(
+        restoring: [waiting],
+        pendingRequests: [PendingRequest(taskID: "waiting", kind: .approval, summary: nil)]
+    )
+
+    let changed = catalog.expirePendingRequest(sessionID: "waiting", now: now)
+    #expect(changed)
+    let task = try #require(catalog.projection().tasks.first)
+    #expect(task.lifecycle == .interrupted)
+    #expect(task.completedAt == now)
+    #expect(task.capabilities.isEmpty)
+    #expect(catalog.projection().pendingRequests.isEmpty)
+}
+
+@Test("A stale Codex rollout without a live writer is cleaned even while its file exists")
+func codexSessionReconciliationCleansAbandonedRollout() {
+    let now = Date(timeIntervalSince1970: 80_000)
+    let old = now.addingTimeInterval(-4_000)
+    let abandoned = TaskSnapshot(
+        id: "abandoned",
+        source: .codexCLI,
+        projectName: "方案",
+        lifecycle: .running,
+        activity: .executing,
+        startedAt: old,
+        updatedAt: old
+    )
+    var live = abandoned
+    live.id = "live"
+    var catalog = TaskCatalog(restoring: [abandoned, live])
+
+    let changed = catalog.reconcileCodexSessions(
+        existingSessionIDs: ["abandoned", "live"],
+        liveSessionIDs: ["live"],
+        now: now
+    )
+
+    #expect(changed)
+    #expect(catalog.projection().tasks.map(\.id) == ["live"])
+    #expect(catalog.projection().tasks.first?.lifecycle == .running)
+}
+
+@Test("Writer reconciliation protects fresh tasks, waiting states and unknown liveness")
+func codexWriterReconciliationProtectsActiveAndWaitingTasks() {
+    let now = Date(timeIntervalSince1970: 90_000)
+    let fresh = TaskSnapshot(
+        id: "fresh",
+        source: .codexDesktop,
+        projectName: "AgentPager",
+        lifecycle: .running,
+        updatedAt: now.addingTimeInterval(-599)
+    )
+    var approval = fresh
+    approval.id = "approval"
+    approval.lifecycle = .waitingApproval
+    approval.updatedAt = now.addingTimeInterval(-4_000)
+    var answer = approval
+    answer.id = "answer"
+    answer.lifecycle = .waitingAnswer
+    var catalog = TaskCatalog(restoring: [fresh, approval, answer])
+
+    let changed = catalog.reconcileCodexSessions(
+        existingSessionIDs: ["fresh", "approval", "answer"],
+        liveSessionIDs: [],
+        now: now
+    )
+    #expect(!changed)
+    #expect(catalog.projection().tasks.count == 3)
+
+    let probeFailed = catalog.reconcileCodexSessions(
+        existingSessionIDs: ["fresh", "approval", "answer"],
+        liveSessionIDs: nil,
+        now: now.addingTimeInterval(1_000)
+    )
+    #expect(!probeFailed)
+    #expect(catalog.projection().tasks.count == 3)
+}
+
+@Test("A new real Codex event restarts a session after its abandoned turn was reconciled")
+func codexSessionCanResumeAfterWriterCleanup() {
+    let now = Date(timeIntervalSince1970: 100_000)
+    let old = now.addingTimeInterval(-900)
+    let task = TaskSnapshot(
+        id: "resumed",
+        source: .codexCLI,
+        projectName: "AgentPager",
+        lifecycle: .running,
+        updatedAt: old
+    )
+    var catalog = TaskCatalog(restoring: [task])
+    _ = catalog.reconcileCodexSessions(
+        existingSessionIDs: ["resumed"],
+        liveSessionIDs: [],
+        now: now
+    )
+    #expect(catalog.projection().tasks.first?.lifecycle == .interrupted)
+
+    _ = catalog.accept(.hook(CodexHookPayload(
+        cwd: "/tmp/AgentPager",
+        hookEventName: .userPromptSubmit,
+        sessionID: "resumed",
+        prompt: "继续"
+    ), receivedAt: now.addingTimeInterval(1)))
+    #expect(catalog.projection().tasks.first?.lifecycle == .running)
+    #expect(catalog.projection().tasks.first?.completedAt == nil)
+}
+
+@Test("Claude 上一轮的完成证据不能结束新一轮")
+func claudeOldStopCannotFinishNewTurn() {
+    let now = Date(timeIntervalSince1970: 110_000)
+    let task = TaskSnapshot(
+        id: "next-turn",
+        source: .claudeCode,
+        projectName: "Claude",
+        lifecycle: .running,
+        startedAt: now,
+        updatedAt: now
+    )
+    var catalog = TaskCatalog(restoring: [task])
+    let changed = catalog.reconcileClaudeSessions(
+        evidenceBySessionID: ["next-turn": ClaudeTranscriptEvidence(
+            sessionID: "next-turn",
+            modificationDate: now,
+            lastActivityAt: now.addingTimeInterval(-5),
+            completedAt: now.addingTimeInterval(-5),
+            hasOpenTurn: false
+        )],
+        now: now
+    )
+    #expect(!changed)
+    #expect(catalog.projection().tasks.first?.lifecycle == .running)
+}
+
+@Test("Claude 长时间执行不会仅因日志安静而被标记中断")
+func claudeLongRunningToolIsNotTimedOutBySilence() {
+    let now = Date(timeIntervalSince1970: 120_000)
+    let old = now.addingTimeInterval(-4_000)
+    let task = TaskSnapshot(
+        id: "long-command",
+        source: .claudeCode,
+        projectName: "Claude",
+        lifecycle: .running,
+        activity: .executing,
+        startedAt: old,
+        updatedAt: old
+    )
+    var catalog = TaskCatalog(restoring: [task])
+    let changed = catalog.reconcileClaudeSessions(
+        evidenceBySessionID: ["long-command": ClaudeTranscriptEvidence(
+            sessionID: "long-command",
+            modificationDate: old,
+            lastActivityAt: old,
+            completedAt: nil,
+            hasOpenTurn: true
+        )],
+        now: now
+    )
+    #expect(!changed)
+    #expect(catalog.projection().tasks.first?.lifecycle == .running)
+}
+
 private final class RecordingPermissionResolver:
     CodexPermissionResolving,
     @unchecked Sendable

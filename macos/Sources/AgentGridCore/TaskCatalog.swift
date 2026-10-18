@@ -142,6 +142,7 @@ public struct TaskCatalog: Sendable {
     @discardableResult
     public mutating func reconcileCodexSessions(
         existingSessionIDs: Set<String>,
+        liveSessionIDs: Set<String>? = nil,
         now: Date = .now,
         gracePeriod: TimeInterval = 10 * 60
     ) -> Bool {
@@ -150,11 +151,71 @@ public struct TaskCatalog: Sendable {
 
         _ = store.interruptOrphanedCodexTasks(
             existingSessionIDs: existingSessionIDs,
+            liveSessionIDs: liveSessionIDs,
             now: now,
             gracePeriod: gracePeriod
         )
         normalize(now: now)
 
+        return commitIfChanged(
+            previousTasks: previousTasks,
+            previousRequests: previousRequests
+        )
+    }
+
+    @discardableResult
+    public mutating func reconcileClaudeSessions(
+        evidenceBySessionID: [String: ClaudeTranscriptEvidence],
+        now: Date = .now,
+        startingGracePeriod: TimeInterval = 2 * 60,
+        inactivityGracePeriod: TimeInterval = 10 * 60
+    ) -> Bool {
+        let previousTasks = store.tasks
+        let previousRequests = requestsByTaskID
+
+        _ = store.reconcileClaudeTasks(
+            evidenceBySessionID: evidenceBySessionID,
+            now: now,
+            startingGracePeriod: startingGracePeriod,
+            inactivityGracePeriod: inactivityGracePeriod
+        )
+        let activeTaskIDs = Set(store.tasks.compactMap { task in
+            task.source == .claudeCode && !task.isTerminal && task.lifecycle != .offline
+                ? task.id
+                : nil
+        })
+        requestsByTaskID = requestsByTaskID.filter { taskID, _ in
+            activeTaskIDs.contains(taskID)
+                || store.tasks.contains { $0.id == taskID && $0.source != .claudeCode }
+        }
+        normalize(now: now)
+
+        return commitIfChanged(
+            previousTasks: previousTasks,
+            previousRequests: previousRequests
+        )
+    }
+
+    @discardableResult
+    public mutating func expirePendingRequest(
+        sessionID: String,
+        now: Date = .now
+    ) -> Bool {
+        let previousTasks = store.tasks
+        let previousRequests = requestsByTaskID
+
+        requestsByTaskID.removeValue(forKey: sessionID)
+        if var task = store.tasks.first(where: { $0.id == sessionID }),
+           task.lifecycle == .waitingApproval {
+            task.lifecycle = .interrupted
+            task.activity = nil
+            task.completedAt = now
+            task.updatedAt = max(task.updatedAt, now)
+            task.isUnread = true
+            task.capabilities = []
+            store.upsert(task)
+        }
+        normalize(now: now)
         return commitIfChanged(
             previousTasks: previousTasks,
             previousRequests: previousRequests
@@ -305,15 +366,18 @@ public struct TaskCatalog: Sendable {
         )
 
         switch hook.event {
-        case .permissionRequest:
+        case .permissionRequest where task.lifecycle == .waitingApproval:
             requestsByTaskID[hook.sessionID] = PendingRequest(
                 taskID: hook.sessionID,
                 kind: .approval,
                 summary: ClaudeEventReducer.summary(from: hook.toolInput)
                     ?? hook.toolName
             )
+        case .permissionRequest:
+            break
         case .notification:
-            if ClaudeEventReducer.isAnswerNotification(hook.notificationType) {
+            if task.lifecycle == .waitingAnswer,
+               ClaudeEventReducer.isAnswerNotification(hook.notificationType) {
                 requestsByTaskID[hook.sessionID] = PendingRequest(
                     taskID: hook.sessionID,
                     kind: .question,
@@ -322,6 +386,12 @@ public struct TaskCatalog: Sendable {
             }
         case .stop, .sessionEnd, .permissionDenied:
             requestsByTaskID.removeValue(forKey: hook.sessionID)
+        case .preToolUse where task.lifecycle == .waitingAnswer:
+            requestsByTaskID[hook.sessionID] = PendingRequest(
+                taskID: hook.sessionID,
+                kind: .question,
+                summary: ClaudeEventReducer.summary(from: hook.toolInput)
+            )
         case .sessionStart, .userPromptSubmit, .preToolUse, .postToolUse,
              .postToolUseFailure, .preCompact, .subagentStart, .subagentStop,
              .stopFailure:

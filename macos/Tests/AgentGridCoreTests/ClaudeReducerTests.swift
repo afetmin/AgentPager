@@ -245,3 +245,234 @@ func claudeSubagentLifecycle() {
     // 全部子代理终态后，父任务不再标记为 delegating。
     #expect(task.activity == .thinking)
 }
+
+@Test("Claude 终态不被同轮迟到工具事件复活")
+func claudeTerminalStateRejectsLateEvents() {
+    let stoppedAt = Date(timeIntervalSince1970: 1_000)
+    var task = ClaudeEventReducer.task(
+        from: ClaudeHookPayload(
+            cwd: "/tmp/agentpager",
+            hookEventName: "UserPromptSubmit",
+            sessionID: "claude-desktop",
+            prompt: "修复状态"
+        ),
+        existing: nil,
+        now: stoppedAt.addingTimeInterval(-10)
+    )
+    task = ClaudeEventReducer.task(
+        from: ClaudeHookPayload(
+            cwd: "/tmp/agentpager",
+            hookEventName: "Stop",
+            sessionID: "claude-desktop"
+        ),
+        existing: task,
+        now: stoppedAt
+    )
+    let completed = task
+
+    for event in ["PostToolUse", "PreToolUse", "PreCompact", "SubagentStop", "StopFailure"] {
+        task = ClaudeEventReducer.task(
+            from: ClaudeHookPayload(
+                cwd: "/tmp/agentpager",
+                hookEventName: event,
+                sessionID: "claude-desktop",
+                toolName: "Bash",
+                agentID: "late-subagent"
+            ),
+            existing: task,
+            now: stoppedAt.addingTimeInterval(2)
+        )
+        #expect(task == completed)
+    }
+}
+
+@Test("Claude 同一提示也可开启下一轮，文本相同不代表重放")
+func claudeRepeatedPromptStartsNewTurn() {
+    let stoppedAt = Date(timeIntervalSince1970: 2_000)
+    let original = ClaudeHookPayload(
+        cwd: "/tmp/agentpager",
+        hookEventName: "UserPromptSubmit",
+        sessionID: "claude-desktop",
+        prompt: "第一轮"
+    )
+    var task = ClaudeEventReducer.task(
+        from: original,
+        existing: nil,
+        now: stoppedAt.addingTimeInterval(-10)
+    )
+    task = ClaudeEventReducer.task(
+        from: ClaudeHookPayload(
+            cwd: "/tmp/agentpager",
+            hookEventName: "Stop",
+            sessionID: "claude-desktop"
+        ),
+        existing: task,
+        now: stoppedAt
+    )
+
+    let replayed = ClaudeEventReducer.task(
+        from: original,
+        existing: task,
+        now: stoppedAt.addingTimeInterval(2)
+    )
+    #expect(replayed.lifecycle == .running)
+    #expect(replayed.completedAt == nil)
+    #expect(replayed.startedAt == stoppedAt.addingTimeInterval(2))
+
+    let next = ClaudeEventReducer.task(
+        from: ClaudeHookPayload(
+            cwd: "/tmp/agentpager",
+            hookEventName: "UserPromptSubmit",
+            sessionID: "claude-desktop",
+            prompt: "第二轮"
+        ),
+        existing: replayed,
+        now: stoppedAt.addingTimeInterval(3)
+    )
+    #expect(next.lifecycle == .running)
+    #expect(next.userPrompt == "第二轮")
+    #expect(next.completedAt == nil)
+    #expect(!next.isUnread)
+}
+
+@Test("Claude 预热 SessionStart 和压缩事件不覆盖现有运行或等待状态")
+func claudeWarmupAndToolReceiptsPreserveState() {
+    let now = Date(timeIntervalSince1970: 3_000)
+    let running = TaskSnapshot(
+        id: "claude-desktop",
+        source: .claudeCode,
+        projectName: "agentpager",
+        lifecycle: .running,
+        activity: .editing,
+        startedAt: now.addingTimeInterval(-20),
+        updatedAt: now.addingTimeInterval(-5)
+    )
+    let afterWarmup = ClaudeEventReducer.task(
+        from: ClaudeHookPayload(
+            cwd: "/tmp/agentpager",
+            hookEventName: "SessionStart",
+            sessionID: "claude-desktop",
+            source: "resume"
+        ),
+        existing: running,
+        now: now
+    )
+    #expect(afterWarmup.lifecycle == .running)
+    #expect(afterWarmup.activity == .editing)
+
+    var waiting = afterWarmup
+    waiting.lifecycle = .waitingApproval
+    waiting.capabilities = [.approve, .deny]
+    let afterReceipt = ClaudeEventReducer.task(
+        from: ClaudeHookPayload(
+            cwd: "/tmp/agentpager",
+            hookEventName: "PreCompact",
+            sessionID: "claude-desktop"
+        ),
+        existing: waiting,
+        now: now.addingTimeInterval(1)
+    )
+    #expect(afterReceipt.lifecycle == .waitingApproval)
+    #expect(afterReceipt.capabilities == [.approve, .deny])
+}
+
+@Test("Claude 在电脑上批准后工具结果恢复运行并清除手机待办")
+func claudeLocalApprovalResumesTask() {
+    let now = Date(timeIntervalSince1970: 4_000)
+    var catalog = TaskCatalog()
+    _ = catalog.accept(.claudeHook(ClaudeHookPayload(
+        cwd: "/tmp/agentpager",
+        hookEventName: "PermissionRequest",
+        sessionID: "local-approval",
+        toolName: "Bash",
+        toolUseID: "tool-1"
+    ), receivedAt: now))
+    #expect(catalog.projection().tasks.first?.lifecycle == .waitingApproval)
+
+    _ = catalog.accept(.claudeHook(ClaudeHookPayload(
+        cwd: "/tmp/agentpager",
+        hookEventName: "PostToolUse",
+        sessionID: "local-approval",
+        toolName: "Bash",
+        toolUseID: "tool-1"
+    ), receivedAt: now.addingTimeInterval(1)))
+    #expect(catalog.projection().tasks.first?.lifecycle == .running)
+    #expect(catalog.projection().tasks.first?.capabilities.isEmpty == true)
+    #expect(catalog.projection().pendingRequests.isEmpty)
+}
+
+@Test("Claude 终态后的迟到通知不会创建幽灵待办")
+func claudeLateRequestsDoNotCreatePendingState() {
+    let now = Date(timeIntervalSince1970: 5_000)
+    var catalog = TaskCatalog()
+    _ = catalog.accept(.claudeHook(ClaudeHookPayload(
+        cwd: "/tmp/agentpager",
+        hookEventName: "Stop",
+        sessionID: "late-request"
+    ), receivedAt: now))
+    for event in ["PermissionRequest", "Notification"] {
+        _ = catalog.accept(.claudeHook(ClaudeHookPayload(
+            cwd: "/tmp/agentpager",
+            hookEventName: event,
+            sessionID: "late-request",
+            notificationType: "idle_prompt"
+        ), receivedAt: now.addingTimeInterval(1)))
+        #expect(catalog.projection().tasks.first?.lifecycle == .succeeded)
+        #expect(catalog.projection().pendingRequests.isEmpty)
+    }
+}
+
+@Test("Claude 原生工具区分读取、搜索、编辑、测试与普通执行")
+func claudeNativeToolActivities() {
+    let cases: [(String, String?, AgentActivity)] = [
+        ("Read", nil, .reading),
+        ("Glob", nil, .searching),
+        ("Grep", nil, .searching),
+        ("Edit", nil, .editing),
+        ("Write", nil, .editing),
+        ("Bash", "python3 -m unittest", .testing),
+        ("Bash", "npm test", .testing),
+        ("Bash", "echo done", .executing),
+        ("Agent", nil, .delegating),
+    ]
+    for (name, command, expected) in cases {
+        let hook = ClaudeHookPayload(
+            cwd: "/tmp/AgentPager",
+            hookEventName: "PreToolUse",
+            sessionID: "tool-test",
+            toolName: name,
+            toolInput: command.map { .object(["command": .string($0)]) }
+        )
+        let task = ClaudeEventReducer.task(from: hook, existing: nil)
+        #expect(task.lifecycle == .running)
+        #expect(task.activity == expected)
+    }
+}
+
+@Test("Claude AskUserQuestion 立即显示等待回答，工具结果恢复运行")
+func claudeQuestionToolHasWaitingLifecycle() {
+    let now = Date(timeIntervalSince1970: 6_000)
+    var catalog = TaskCatalog()
+    _ = catalog.accept(.claudeHook(ClaudeHookPayload(
+        cwd: "/tmp/AgentPager",
+        hookEventName: "PreToolUse",
+        sessionID: "question-tool",
+        toolName: "AskUserQuestion",
+        toolInput: .object(["questions": .array([
+            .object(["question": .string("Which option?")]),
+        ])])
+    ), receivedAt: now))
+    #expect(catalog.projection().tasks.first?.lifecycle == .waitingAnswer)
+    #expect(catalog.projection().tasks.first?.capabilities.isEmpty == true)
+    #expect(catalog.projection().pendingRequests.first?.kind == .question)
+    #expect(catalog.projection().pendingRequests.first?.summary == "Which option?")
+
+    _ = catalog.accept(.claudeHook(ClaudeHookPayload(
+        cwd: "/tmp/AgentPager",
+        hookEventName: "PostToolUse",
+        sessionID: "question-tool",
+        toolName: "AskUserQuestion"
+    ), receivedAt: now.addingTimeInterval(1)))
+    #expect(catalog.projection().tasks.first?.lifecycle == .running)
+    #expect(catalog.projection().pendingRequests.isEmpty)
+}
