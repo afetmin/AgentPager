@@ -381,6 +381,7 @@ private fun UsageRangeSelector(
                         if (selected) AgentGridColors.SurfaceRaised else Color.Transparent,
                         RectangleShape,
                     )
+                    .focusHighlight()
                     .clickable { onRangeSelected(range) }
                     .semantics {
                         contentDescription = "显示最近 ${range.label}用量"

@@ -62,6 +62,8 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
@@ -177,6 +179,12 @@ private fun PairingScreen(
     onPair: (String) -> Unit,
 ) {
     var manualText by remember { mutableStateOf("") }
+    // 电视、机顶盒没有摄像头：隐藏取景框，只保留文本配对。
+    val canScan = hasCamera(LocalContext.current)
+    val textFocus = remember { FocusRequester() }
+    LaunchedEffect(canScan) {
+        if (!canScan) runCatching { textFocus.requestFocus() }
+    }
     Row(
         modifier = Modifier
             .fillMaxSize()
@@ -185,13 +193,15 @@ private fun PairingScreen(
         // 横屏下拉开取景框与操作说明，避免两块内容视觉粘连。
         horizontalArrangement = Arrangement.spacedBy(48.dp),
     ) {
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight()
-                .background(AgentGridColors.Surface),
-        ) {
-            QRCodeScanner(onResult = onPair, modifier = Modifier.fillMaxSize())
+        if (canScan) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .background(AgentGridColors.Surface),
+            ) {
+                QRCodeScanner(onResult = onPair, modifier = Modifier.fillMaxSize())
+            }
         }
         Column(
             modifier = Modifier
@@ -207,10 +217,18 @@ private fun PairingScreen(
                 letterSpacing = 2.sp,
             )
             Spacer(Modifier.height(10.dp))
-            Text("扫描 Mac 上的二维码", color = AgentGridColors.Cyan, fontSize = 16.sp)
+            Text(
+                if (canScan) "扫描 Mac 上的二维码" else "输入 Mac 端配对文本",
+                color = AgentGridColors.Cyan,
+                fontSize = 16.sp,
+            )
             Spacer(Modifier.height(8.dp))
             Text(
-                "在 Mac 上打开 AgentGrid Bridge → 连接，\n扫描其中显示的二维码",
+                if (canScan) {
+                    "在 Mac 上打开 AgentGrid Bridge → 连接，\n扫描其中显示的二维码"
+                } else {
+                    "此设备没有摄像头。在 Mac 上打开 AgentGrid Bridge → 连接，\n复制配对文本后在下方粘贴或输入"
+                },
                 color = AgentGridColors.Muted,
                 fontSize = 12.sp,
                 lineHeight = 18.sp,
@@ -219,9 +237,13 @@ private fun PairingScreen(
             OutlinedTextField(
                 value = manualText,
                 onValueChange = { manualText = it },
-                label = { Text("无法扫码？粘贴 Mac 端配对文本") },
+                label = {
+                    Text(if (canScan) "无法扫码？粘贴 Mac 端配对文本" else "Mac 端配对文本")
+                },
                 minLines = 3,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(textFocus),
             )
             Spacer(Modifier.height(10.dp))
             Button(
@@ -485,6 +507,7 @@ private fun TopControls(
         Box(
             modifier = Modifier
                 .size(28.dp)
+                .focusHighlight()
                 .clickable(onClick = onToggleDashboard)
                 .semantics {
                     contentDescription = if (dashboardVisible) {
@@ -500,6 +523,7 @@ private fun TopControls(
         Box(
             modifier = Modifier
                 .size(28.dp)
+                .focusHighlight()
                 .clickable(onClick = onToggleSettings)
                 .semantics {
                     contentDescription = if (settingsVisible) "关闭设置" else "打开设置"
@@ -593,6 +617,7 @@ private fun TaskRow(
         modifier = modifier
             .fillMaxWidth()
             .background(if (expanded) AgentGridColors.Surface else Color.Transparent)
+            .focusHighlight()
             .clickable(onClick = onClick)
             .padding(horizontal = 4.dp),
     ) {
