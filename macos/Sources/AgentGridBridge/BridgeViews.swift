@@ -331,6 +331,14 @@ struct BridgeSettingsView: View {
     }
 
     private var hookView: some View {
+        // 兼容客户端较多，整页可滚动。
+        ScrollView {
+            hookContent
+        }
+        .onAppear { model.refreshIntegrationStatuses() }
+    }
+
+    private var hookContent: some View {
         VStack(alignment: .leading, spacing: 18) {
             SettingsTitle("Agent 生命周期 Hook")
             PixelPanel {
@@ -384,6 +392,26 @@ struct BridgeSettingsView: View {
                         Button("卸载") { model.uninstallClaudeHooks() }
                             .buttonStyle(PixelButtonStyle(accent: PixelTheme.red))
                             .disabled(!model.claudeHookInstalled)
+                    }
+                }
+            }
+            PixelPanel {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("其他客户端")
+                        .font(.pixel(13, weight: .bold))
+                        .foregroundStyle(PixelTheme.cyan)
+                    Text("兼容 Claude Code Hook 协议的客户端。只有检测到客户端已安装才能写入，改写前自动备份并保留你的既有 Hook。")
+                        .foregroundStyle(PixelTheme.muted)
+                        .lineSpacing(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ForEach(AgentIntegrations.all) { integration in
+                        IntegrationRow(
+                            integration: integration,
+                            status: model.integrationStatuses[integration.id]
+                                ?? BridgeModel.IntegrationStatus(),
+                            install: { model.installIntegration(id: integration.id) },
+                            uninstall: { model.uninstallIntegration(id: integration.id) }
+                        )
                     }
                 }
             }
@@ -516,6 +544,62 @@ private struct StatusCell: View {
         .scaleEffect(active ? 1 : 0.985)
         .animation(.spring(response: 0.28, dampingFraction: 0.84), value: active)
         .animation(.easeInOut(duration: 0.18), value: value)
+    }
+}
+
+private struct IntegrationRow: View {
+    let integration: AgentIntegration
+    let status: BridgeModel.IntegrationStatus
+    let install: () -> Void
+    let uninstall: () -> Void
+
+    private var statusText: String {
+        if !status.detected && !status.installed { return "未检测到客户端" }
+        if status.installed { return status.dormant ? "已写入，但客户端总开关已关闭" : "已安装" }
+        return "未安装"
+    }
+
+    private var statusAccent: Color {
+        if status.installed { return status.dormant ? PixelTheme.amber : PixelTheme.green }
+        return status.detected ? PixelTheme.amber : PixelTheme.muted
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            PixelDivider()
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(integration.displayName)
+                    .font(.pixel(12, weight: .bold))
+                    .foregroundStyle(PixelTheme.text)
+                Text(integration.verification == .officialDocs ? "依据官方文档" : "社区实现 · 未真机验证")
+                    .font(.pixel(9))
+                    .foregroundStyle(PixelTheme.muted)
+            }
+            InfoRow(label: "STATUS", value: statusText, accent: statusAccent)
+            Text("~/\(integration.configPath)")
+                .font(.pixel(10))
+                .foregroundStyle(PixelTheme.muted)
+            if let note = integration.note {
+                Text(note)
+                    .font(.pixel(10))
+                    .foregroundStyle(PixelTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let error = status.error {
+                Text(error)
+                    .font(.pixel(10))
+                    .foregroundStyle(PixelTheme.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 10) {
+                Button(status.installed ? "修复" : "安装", action: install)
+                    .buttonStyle(PixelButtonStyle(accent: PixelTheme.cyan))
+                    .disabled(!status.detected)
+                Button("卸载", action: uninstall)
+                    .buttonStyle(PixelButtonStyle(accent: PixelTheme.red))
+                    .disabled(!status.installed)
+            }
+        }
     }
 }
 

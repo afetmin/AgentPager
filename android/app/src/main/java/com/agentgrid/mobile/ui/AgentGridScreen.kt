@@ -807,9 +807,9 @@ private fun TaskMeta(task: TaskSnapshot, alpha: Float) {
         verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            MetaTag(agentBadge(task.source), agentBadgeColor(task.source), alpha)
+            MetaTag(agentBadge(task), agentBadgeColor(task.source), alpha)
             MetaTag(
-                agentOriginLabel(task.source),
+                agentOriginLabel(task),
                 AgentGridColors.Muted,
                 alpha,
             )
@@ -1107,6 +1107,12 @@ private fun lifecycleColor(
         else -> AgentGridColors.Magenta
     }
 }
+
+internal fun agentBadge(task: TaskSnapshot): String =
+    task.agentName?.takeIf { it.isNotBlank() } ?: agentBadge(task.source)
+
+internal fun agentOriginLabel(task: TaskSnapshot): String =
+    if (task.agentName.isNullOrBlank()) agentOriginLabel(task.source) else "Hook"
 
 private fun agentBadge(source: AgentSource): String = when (source) {
     AgentSource.CODEX_DESKTOP, AgentSource.CODEX_CLI -> "Codex"

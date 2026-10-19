@@ -4,6 +4,7 @@ public struct TaskSnapshotPersistence: Sendable {
     private struct StoredTask: Codable {
         var id: String
         var source: AgentSource
+        var agentName: String?
         var projectName: String
         var title: String
         var userPrompt: String?
@@ -21,6 +22,7 @@ public struct TaskSnapshotPersistence: Sendable {
         init(_ task: TaskSnapshot) {
             id = task.id
             source = task.source
+            agentName = task.agentName
             projectName = task.projectName
             title = task.title
             userPrompt = task.userPrompt
@@ -53,7 +55,8 @@ public struct TaskSnapshotPersistence: Sendable {
                 isUnread: isUnread,
                 isPinned: isPinned,
                 isMuted: isMuted,
-                capabilities: capabilities
+                capabilities: capabilities,
+                agentName: agentName
             )
         }
     }

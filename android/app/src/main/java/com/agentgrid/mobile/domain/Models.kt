@@ -137,6 +137,9 @@ data class TaskSnapshot(
     val isPinned: Boolean = false,
     val isMuted: Boolean = false,
     val capabilities: Set<TaskCapability> = emptySet(),
+    // 兼容 Claude Code 协议的其他客户端（如 ZCode、WorkBuddy）的展示名；source 仍是 claudeCode。
+    // 旧版 Mac 端不发送该字段，因此必须可空且有默认值。
+    val agentName: String? = null,
 ) {
     val isTerminal: Boolean
         get() = lifecycle in setOf(

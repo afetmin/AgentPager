@@ -15,12 +15,23 @@ final class BridgeModel {
     private(set) var lastError: String?
     private(set) var pairingText = ""
     private(set) var recentEvents: [String] = []
+    /// 其他兼容客户端（ZCode、WorkBuddy 等）的 Hook 状态，按 `AgentIntegration.id` 索引。
+    private(set) var integrationStatuses: [String: IntegrationStatus] = [:]
+
+    struct IntegrationStatus: Equatable {
+        var detected = false
+        var installed = false
+        /// 已写入但客户端的总开关被用户关闭，Hook 不会运行。
+        var dormant = false
+        var error: String?
+    }
 
     private var catalog = PersistentTaskCatalog()
     private var replayGuard = ReplayGuard()
     private var pairingSecret = Data()
     private let hookConfiguration = CodexHookConfiguration()
     private let claudeHookConfiguration = ClaudeHookConfiguration()
+    private let integrationHome = FileManager.default.homeDirectoryForCurrentUser
     private var rolloutObservation = CodexRolloutObservation()
     private var claudeTranscriptObservation = ClaudeTranscriptObservation()
     private var hookServer: HookBridgeServer?
@@ -90,6 +101,7 @@ final class BridgeModel {
 
         refreshHookStatus()
         refreshClaudeHookStatus()
+        refreshIntegrationStatuses()
         refreshUsage()
         handleRolloutObservation()
         publishCatalog()
@@ -218,6 +230,65 @@ final class BridgeModel {
 
     func clearError() {
         lastError = nil
+        for id in integrationStatuses.keys {
+            integrationStatuses[id]?.error = nil
+        }
+    }
+
+    func installIntegration(id: String) {
+        guard let integration = AgentIntegrations.integration(id: id) else { return }
+        let configuration = AgentIntegrationConfiguration(
+            integration: integration,
+            home: integrationHome
+        )
+        do {
+            let change = try configuration.install(binaryPath: hookExecutableURL.path)
+            addEvent(change.changed
+                ? "\(integration.displayName) Hook 已安装"
+                : "\(integration.displayName) Hook 已是最新")
+            refreshIntegrationStatus(integration)
+        } catch {
+            refreshIntegrationStatus(integration)
+            integrationStatuses[id, default: IntegrationStatus()].error =
+                "安装 \(integration.displayName) Hook 失败：\(error.localizedDescription)"
+        }
+    }
+
+    func uninstallIntegration(id: String) {
+        guard let integration = AgentIntegrations.integration(id: id) else { return }
+        let configuration = AgentIntegrationConfiguration(
+            integration: integration,
+            home: integrationHome
+        )
+        do {
+            let change = try configuration.uninstall()
+            if change.changed {
+                addEvent("AgentPager \(integration.displayName) Hook 已移除")
+            }
+            refreshIntegrationStatus(integration)
+        } catch {
+            refreshIntegrationStatus(integration)
+            integrationStatuses[id, default: IntegrationStatus()].error =
+                "卸载 \(integration.displayName) Hook 失败：\(error.localizedDescription)"
+        }
+    }
+
+    func refreshIntegrationStatuses() {
+        for integration in AgentIntegrations.all {
+            refreshIntegrationStatus(integration)
+        }
+    }
+
+    private func refreshIntegrationStatus(_ integration: AgentIntegration) {
+        let configuration = AgentIntegrationConfiguration(
+            integration: integration,
+            home: integrationHome
+        )
+        integrationStatuses[integration.id] = IntegrationStatus(
+            detected: configuration.isClientDetected(),
+            installed: configuration.isInstalled(),
+            dormant: configuration.isDormant()
+        )
     }
 
     private func handle(_ envelope: HookEnvelope) {
@@ -272,6 +343,7 @@ final class BridgeModel {
         let claudeCandidates = Set(
             catalog.projection().tasks.compactMap { task -> String? in
                 guard task.source == .claudeCode,
+                      task.agentName == nil,
                       task.lifecycle == .starting || task.lifecycle == .running else {
                     return nil
                 }

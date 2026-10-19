@@ -26,6 +26,7 @@ public enum ClaudeEventReducer {
         )
 
         task.projectName = hook.projectName
+        task.agentName = AgentIntegrations.displayName(forAgentID: hook.integrationID)
         task.updatedAt = now
 
         switch hook.event {

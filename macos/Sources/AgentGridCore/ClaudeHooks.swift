@@ -54,6 +54,9 @@ public struct ClaudeHookPayload: Codable, Equatable, Sendable {
     public var agentID: String?
     public var agentType: String?
     public var taskDescription: String?
+    /// 具体客户端的 `AgentIntegration.id`（如 zcode、workbuddy）；`nil` 表示 Claude Code 本身。
+    /// 不来自客户端载荷，由 Hook 命令行的 `--agent` 经信封传入，因此不参与编解码。
+    public var integrationID: String?
 
     private enum CodingKeys: String, CodingKey {
         case cwd
@@ -207,12 +210,22 @@ public enum ClaudeHookInstaller {
         "\(shellQuote(binaryPath)) --source claude"
     }
 
-    public static func install(existingData: Data?, command: String) throws -> HookFileMutation {
+    public typealias EventSpec = (name: String, matcher: String?, timeout: Int?)
+
+    /// 兼容客户端（`AgentIntegration`）使用自己的事件集合与状态文案安装同一种 Hook 结构。
+    public static func install(
+        existingData: Data?,
+        command: String,
+        events: [EventSpec]? = nil,
+        statusMessage: String? = nil
+    ) throws -> HookFileMutation {
+        let events = events ?? hookEvents
+        let statusMessage = statusMessage ?? managedStatusMessage
         var root = try rootObject(existingData)
         var hooks = root["hooks"] as? [String: Any] ?? [:]
 
         // 先清理任何已存在的 AgentPager 管理项，保证幂等替换而非叠加。
-        for spec in hookEvents {
+        for spec in events {
             let groups = (hooks[spec.name] as? [[String: Any]] ?? [])
                 .filter { !isManaged($0) }
             if groups.isEmpty {
@@ -222,10 +235,12 @@ public enum ClaudeHookInstaller {
             }
         }
 
-        for spec in hookEvents {
+        for spec in events {
             let groups = (hooks[spec.name] as? [[String: Any]] ?? [])
                 .filter { !isManaged($0) }
-            hooks[spec.name] = groups + [managedGroup(spec: spec, command: command)]
+            hooks[spec.name] = groups + [
+                managedGroup(spec: spec, command: command, statusMessage: statusMessage),
+            ]
         }
 
         root["hooks"] = hooks
@@ -237,7 +252,11 @@ public enum ClaudeHookInstaller {
         )
     }
 
-    public static func uninstall(existingData: Data?) throws -> HookFileMutation {
+    public static func uninstall(
+        existingData: Data?,
+        events: [EventSpec]? = nil
+    ) throws -> HookFileMutation {
+        let events = events ?? hookEvents
         guard let existingData else {
             return HookFileMutation(contents: nil, changed: false, hasRemainingHooks: false)
         }
@@ -245,14 +264,15 @@ public enum ClaudeHookInstaller {
         var hooks = root["hooks"] as? [String: Any] ?? [:]
         var changed = false
 
-        for spec in hookEvents {
-            let groups = hooks[spec.name] as? [[String: Any]] ?? []
+        // 同时清理配置里任何事件下遗留的管理项（旧版本可能装过现在已不再使用的事件）。
+        for name in Set(events.map(\.name)).union(hooks.keys) {
+            guard let groups = hooks[name] as? [[String: Any]] else { continue }
             let remaining = groups.filter { !isManaged($0) }
             changed = changed || remaining.count != groups.count
             if remaining.isEmpty {
-                hooks.removeValue(forKey: spec.name)
+                hooks.removeValue(forKey: name)
             } else {
-                hooks[spec.name] = remaining
+                hooks[name] = remaining
             }
         }
 
@@ -277,24 +297,25 @@ public enum ClaudeHookInstaller {
         )
     }
 
-    public static func isInstalled(data: Data?) -> Bool {
+    public static func isInstalled(data: Data?, events: [EventSpec]? = nil) -> Bool {
         guard let root = try? rootObject(data),
               let hooks = root["hooks"] as? [String: Any] else {
             return false
         }
-        return hookEvents.allSatisfy { spec in
+        return (events ?? hookEvents).allSatisfy { spec in
             (hooks[spec.name] as? [[String: Any]] ?? []).contains(where: isManaged)
         }
     }
 
     private static func managedGroup(
         spec: (name: String, matcher: String?, timeout: Int?),
-        command: String
+        command: String,
+        statusMessage: String
     ) -> [String: Any] {
         var hook: [String: Any] = [
             "type": "command",
             "command": command,
-            "statusMessage": managedStatusMessage,
+            "statusMessage": statusMessage,
         ]
         if let timeout = spec.timeout {
             hook["timeout"] = timeout
