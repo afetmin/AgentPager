@@ -1,5 +1,5 @@
 import Testing
-@testable import AgentGridCore
+@testable import AgentGridShared
 
 @Test("像素状态使用连续强度与连续位移")
 func pixelMotionIsContinuous() {
