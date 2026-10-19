@@ -33,6 +33,10 @@ private final class HookClientState: @unchecked Sendable {
 @main
 struct AgentPagerHooksCommand {
     static func main() {
+        if CommandLine.arguments.contains("--claude-statusline") {
+            runClaudeStatusLine()
+            return
+        }
         let source = resolveSource(from: CommandLine.arguments)
         let input = FileHandle.standardInput.readDataToEndOfFile()
 
@@ -41,14 +45,22 @@ struct AgentPagerHooksCommand {
         let isPermission: Bool
         switch source {
         case .claude:
-            let payload = try? JSONDecoder().decode(ClaudeHookPayload.self, from: input)
+            var decodable = input
+            if resolveAgent(from: CommandLine.arguments) != nil,
+               let object = (try? JSONSerialization.jsonObject(with: input)) as? [String: Any],
+               let normalized = try? JSONSerialization.data(
+                   withJSONObject: HookPayloadKeyNormalizer.snakeCasedKeys(object)
+               ) {
+                decodable = normalized
+            }
+            let payload = try? JSONDecoder().decode(ClaudeHookPayload.self, from: decodable)
             isPermission = payload?.event == .permissionRequest
         case .codex:
             let payload = try? JSONDecoder().decode(CodexHookPayload.self, from: input)
             isPermission = payload?.hookEventName == .permissionRequest
         }
 
-        let line = wrapInEnvelope(input: input, source: source)
+        let line = wrapInEnvelope(input: input, source: source, agentID: resolveAgent(from: CommandLine.arguments))
         let connection = NWConnection(
             host: "127.0.0.1",
             port: NWEndpoint.Port(rawValue: 49_361)!,
@@ -93,6 +105,43 @@ struct AgentPagerHooksCommand {
         }
     }
 
+    /// Claude Code statusLine 入口：落盘订阅额度，再转发用户原有的 statusLine 命令。
+    private static func runClaudeStatusLine() {
+        let input = FileHandle.standardInput.readDataToEndOfFile()
+        ClaudeRateLimitStore.record(statusLineInput: input)
+
+        var arguments = CommandLine.arguments.dropFirst().makeIterator()
+        var chainedCommand: String?
+        while let argument = arguments.next() {
+            if argument == "--chain", let encoded = arguments.next() {
+                let original = ClaudeStatusLineInstaller.original(
+                    fromCommand: "x --chain \(encoded)"
+                )
+                chainedCommand = original?["command"] as? String
+            }
+        }
+        guard let chainedCommand else { return }
+
+        let process = Process()
+        let stdin = Pipe()
+        let stdout = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", chainedCommand]
+        process.standardInput = stdin
+        process.standardOutput = stdout
+        process.standardError = FileHandle.standardError
+        do {
+            try process.run()
+        } catch {
+            return
+        }
+        stdin.fileHandleForWriting.write(input)
+        try? stdin.fileHandleForWriting.close()
+        let output = stdout.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        FileHandle.standardOutput.write(output)
+    }
+
     private static func resolveSource(from arguments: [String]) -> HookSource {
         // 兼容 `--source claude` 与 `--source=claude` 两种写法。
         var iterator = arguments.dropFirst().makeIterator()
@@ -108,19 +157,37 @@ struct AgentPagerHooksCommand {
         return .codex
     }
 
-    /// 把原始 Hook 载荷包进 `{hook_source, payload}` 信封并加换行，
+    /// 解析 `--agent <id>` / `--agent=<id>`：兼容客户端（ZCode、WorkBuddy 等）的标识。
+    private static func resolveAgent(from arguments: [String]) -> String? {
+        var iterator = arguments.dropFirst().makeIterator()
+        while let argument = iterator.next() {
+            if argument == "--agent", let value = iterator.next(), !value.isEmpty {
+                return value
+            }
+            if argument.hasPrefix("--agent=") {
+                let value = String(argument.dropFirst("--agent=".count))
+                return value.isEmpty ? nil : value
+            }
+        }
+        return nil
+    }
+
+    /// 把原始 Hook 载荷包进 `{hook_source, agent_id?, payload}` 信封并加换行，
     /// 让桥接服务器能按来源选择解码器与响应格式。
-    private static func wrapInEnvelope(input: Data, source: HookSource) -> Data {
+    private static func wrapInEnvelope(input: Data, source: HookSource, agentID: String?) -> Data {
         guard let payload = try? JSONSerialization.jsonObject(with: input) else {
             // 极端情况下无法解析时，退化为原样发送，服务器仍按 codex 兼容。
             var fallback = input
             fallback.append(UInt8(ascii: "\n"))
             return fallback
         }
-        let envelope: [String: Any] = [
+        var envelope: [String: Any] = [
             "hook_source": source.rawValue,
             "payload": payload,
         ]
+        if let agentID {
+            envelope["agent_id"] = agentID
+        }
         let data = (try? JSONSerialization.data(
             withJSONObject: envelope,
             options: [.sortedKeys, .withoutEscapingSlashes]

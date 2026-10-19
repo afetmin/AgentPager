@@ -241,8 +241,18 @@ public final class HookBridgeServer: CodexPermissionResolving, @unchecked Sendab
             }
             return nil
         case .claude:
-            if let payloadData,
-               let payload = try? JSONDecoder().decode(ClaudeHookPayload.self, from: payloadData) {
+            let agentID = object["agent_id"] as? String
+            // 非 Claude Code 的兼容客户端可能混用 camelCase 字段名，先补齐 snake_case 再解码。
+            let normalizedData = agentID == nil
+                ? payloadData
+                : (payloadObject as? [String: Any]).flatMap {
+                    try? JSONSerialization.data(
+                        withJSONObject: HookPayloadKeyNormalizer.snakeCasedKeys($0)
+                    )
+                }
+            if let normalizedData,
+               var payload = try? JSONDecoder().decode(ClaudeHookPayload.self, from: normalizedData) {
+                payload.integrationID = agentID
                 return .claude(payload)
             }
             return nil

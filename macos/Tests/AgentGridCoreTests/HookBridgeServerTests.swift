@@ -204,3 +204,53 @@ func expiredPermissionConnectionRejectsResolution() {
         try server.resolve(sessionID: "expired-session", decision: .allow)
     }
 }
+
+private final class EnvelopeRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var items: [HookEnvelope] = []
+
+    var claudePayloads: [ClaudeHookPayload] {
+        lock.withLock {
+            items.compactMap { item in
+                if case let .claude(payload) = item { return payload }
+                return nil
+            }
+        }
+    }
+
+    func record(_ envelope: HookEnvelope) { lock.withLock { items.append(envelope) } }
+}
+
+@Test("信封里的 agent_id 写入 Claude 载荷，兼容客户端的 camelCase 字段也能解码")
+func hookServerCarriesAgentIDAndAcceptsCamelCase() throws {
+    let recorder = EnvelopeRecorder()
+    let (server, port) = try startServer { recorder.record($0) }
+    defer { server.stop() }
+
+    let client = try #require(TestClient(host: "127.0.0.1", port: port))
+    client.sendLine(
+        """
+        {"hook_source":"claude","agent_id":"zcode","payload":{"cwd":"/tmp/agentpager",\
+        "hookEventName":"UserPromptSubmit","sessionId":"zcode-1","prompt":"你好"}}
+        """
+    )
+    #expect(client.receive() == Data("\n".utf8))
+
+    let payload = try #require(recorder.claudePayloads.first)
+    #expect(payload.integrationID == "zcode")
+    #expect(payload.sessionID == "zcode-1")
+    #expect(payload.event == .userPromptSubmit)
+}
+
+@Test("不带 agent_id 的旧信封保持原行为，integrationID 为 nil")
+func hookServerLegacyEnvelopeHasNoIntegration() throws {
+    let recorder = EnvelopeRecorder()
+    let (server, port) = try startServer { recorder.record($0) }
+    defer { server.stop() }
+
+    let client = try #require(TestClient(host: "127.0.0.1", port: port))
+    client.sendLine(claudeHook(event: "Stop", sessionID: "legacy-1"))
+    #expect(client.receive() == Data("\n".utf8))
+
+    #expect(recorder.claudePayloads.first?.integrationID == nil)
+}

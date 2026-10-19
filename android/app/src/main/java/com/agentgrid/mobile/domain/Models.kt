@@ -2,6 +2,11 @@ package com.agentgrid.mobile.domain
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.SetSerializer
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonTransformingSerializer
 
 @Serializable
 enum class AgentSource {
@@ -87,13 +92,30 @@ enum class TaskCapability {
     RETRY,
 }
 
+/** 新版 Bridge 增加未知能力时忽略该项，而不是让整条快照解码失败。 */
+internal object TaskCapabilitySetSerializer : JsonTransformingSerializer<Set<TaskCapability>>(
+    SetSerializer(TaskCapability.serializer()),
+) {
+    private val knownNames: Set<String> = TaskCapability.serializer().descriptor.let { descriptor ->
+        (0 until descriptor.elementsCount).map(descriptor::getElementName).toSet()
+    }
+
+    override fun transformDeserialize(element: JsonElement): JsonElement {
+        if (element !is JsonArray) return element
+        return JsonArray(
+            element.filter { it is JsonPrimitive && it.isString && it.content in knownNames },
+        )
+    }
+}
+
 @Serializable
 data class TokenUsage(
-    val input: Int = 0,
-    val cachedInput: Int = 0,
-    val output: Int = 0,
-    val reasoningOutput: Int = 0,
-    val total: Int = 0,
+    // Mac 端使用 64 位整数；累计缓存读取很容易超过 Int 上限，Int 会让整条快照解码失败。
+    val input: Long = 0,
+    val cachedInput: Long = 0,
+    val output: Long = 0,
+    val reasoningOutput: Long = 0,
+    val total: Long = 0,
 )
 
 @Serializable
@@ -136,7 +158,11 @@ data class TaskSnapshot(
     val isUnread: Boolean = false,
     val isPinned: Boolean = false,
     val isMuted: Boolean = false,
+    @Serializable(with = TaskCapabilitySetSerializer::class)
     val capabilities: Set<TaskCapability> = emptySet(),
+    // 兼容 Claude Code 协议的其他客户端（如 ZCode、WorkBuddy）的展示名；source 仍是 claudeCode。
+    // 旧版 Mac 端不发送该字段，因此必须可空且有默认值。
+    val agentName: String? = null,
 ) {
     val isTerminal: Boolean
         get() = lifecycle in setOf(
@@ -146,7 +172,8 @@ data class TaskSnapshot(
 
     fun elapsedAt(now: Long): Long {
         val endAt = if (isTerminal) {
-            requireNotNull(completedAt) { "终态任务必须包含完成时间" }
+            // 终态消息缺 completedAt 时回退到 updatedAt，避免渲染阶段抛异常导致应用崩溃。
+            completedAt ?: updatedAt
         } else {
             now
         }
@@ -174,7 +201,7 @@ data class UsageWindow(
     val label: String,
     val usedPercentage: Double,
     val remainingPercentage: Double,
-    val windowMinutes: Int,
+    val windowMinutes: Int = 0,
     val resetsAt: Long? = null,
 )
 
@@ -201,7 +228,10 @@ data class UsageSnapshot(
 @Serializable
 data class StateSnapshotPayload(
     val tasks: List<TaskSnapshot>,
+    /** Codex 额度；字段名保持不变以兼容旧版 Bridge。 */
     val usage: UsageSnapshot? = null,
+    /** Claude Code 额度；旧版 Bridge 不发送该字段。 */
+    val claudeUsage: UsageSnapshot? = null,
     val focusedTaskID: String? = null,
     val pendingRequests: List<PendingRequest> = emptyList(),
 )

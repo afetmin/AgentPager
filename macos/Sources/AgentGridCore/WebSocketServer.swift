@@ -25,9 +25,14 @@ public final class WebSocketServer: @unchecked Sendable {
         self.localHTTPHandler = localHTTPHandler
     }
 
-    public func start(port: UInt16 = 49_362) throws {
+    /// `serviceID` 写入 Bonjour TXT 记录（键 `id`），手机在 IP 变化后据此认出自己配对的那台 Mac。
+    public func start(port: UInt16 = 49_362, serviceID: String? = nil) throws {
         let listener = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: port)!)
-        listener.service = NWListener.Service(name: "AgentPager Bridge", type: "_agentgrid._tcp")
+        listener.service = NWListener.Service(
+            name: "AgentPager Bridge",
+            type: BridgeServiceDiscovery.serviceType,
+            txtRecord: serviceID.map { NWTXTRecord([BridgeServiceDiscovery.serviceIDKey: $0]).data }
+        )
         listener.newConnectionHandler = { [weak self] connection in
             self?.accept(connection)
         }

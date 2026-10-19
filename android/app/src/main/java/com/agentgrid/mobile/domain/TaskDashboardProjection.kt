@@ -177,7 +177,8 @@ object TaskDashboardProjector {
 
     private val TaskSnapshot.sortGroup: Int
         get() = when (lifecycle) {
-            AgentLifecycle.WAITING_APPROVAL -> 3
+            // 等待回答与等待批准一样需要人工介入，不能沉到运行中任务下面被挤出可见范围。
+            AgentLifecycle.WAITING_APPROVAL, AgentLifecycle.WAITING_ANSWER -> 3
             AgentLifecycle.RUNNING -> 2
             AgentLifecycle.SUCCEEDED -> 0
             else -> 1

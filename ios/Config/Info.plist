@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>UIAppFonts</key>
+	<array>
+		<string>fusion_pixel_12px_zh_hans.ttf</string>
+	</array>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_agentgrid._tcp</string>
+	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>AgentPager 需要访问局域网，才能连接你电脑上的 AgentPager Bridge 并同步 Agent 状态。</string>
+	<key>NSCameraUsageDescription</key>
+	<string>AgentPager 使用相机扫描 Mac 端展示的配对二维码。</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+</dict>
+</plist>
