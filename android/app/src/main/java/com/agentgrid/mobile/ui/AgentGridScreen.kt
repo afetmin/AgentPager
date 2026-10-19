@@ -22,6 +22,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -86,10 +87,12 @@ import com.agentgrid.mobile.domain.PendingRequestKind
 import com.agentgrid.mobile.domain.SubagentSnapshot
 import com.agentgrid.mobile.domain.TaskCapability
 import com.agentgrid.mobile.domain.TaskSnapshot
+import com.agentgrid.mobile.domain.UsageSnapshot
 import com.agentgrid.mobile.domain.UsageWindow
 import com.agentgrid.mobile.network.LinkState
 import com.agentgrid.mobile.render.PixelCoreSurfaceView
 import com.agentgrid.mobile.render.PixelRenderState
+import java.util.Locale
 import kotlinx.coroutines.delay
 
 private val EaseOutQuart = CubicBezierEasing(0.25f, 1f, 0.5f, 1f)
@@ -329,17 +332,15 @@ private fun TaskTerminal(
         soundTracker.nextCue(tasks, soundEnabled)?.let(sound::play)
     }
 
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(AgentGridColors.Background),
     ) {
         TopControls(
-            windows = if (showDashboard) {
-                emptyList()
-            } else {
-                state.usage?.windows.orEmpty()
-            },
+            codexUsage = if (showDashboard) null else state.usage,
+            claudeUsage = if (showDashboard) null else state.claudeUsage,
+            compact = maxWidth < 640.dp,
             settingsVisible = settingsVisible,
             dashboardVisible = showDashboard,
             onToggleDashboard = {
@@ -376,7 +377,8 @@ private fun TaskTerminal(
         ) { isDashboardVisible ->
             if (isDashboardVisible) {
                 UsageDashboard(
-                    usage = state.usage,
+                    codexUsage = state.usage,
+                    claudeUsage = state.claudeUsage,
                     connected = state.linkState == LinkState.CONNECTED,
                 )
             } else {
@@ -489,7 +491,9 @@ private fun TaskTerminal(
 
 @Composable
 private fun TopControls(
-    windows: List<UsageWindow>,
+    codexUsage: UsageSnapshot?,
+    claudeUsage: UsageSnapshot?,
+    compact: Boolean,
     settingsVisible: Boolean,
     dashboardVisible: Boolean,
     onToggleDashboard: () -> Unit,
@@ -501,8 +505,16 @@ private fun TopControls(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        windows.take(2).forEach { window ->
-            UsagePill(window)
+        UsageProvider.entries.forEach { provider ->
+            val windows = provider.pick(codexUsage, claudeUsage)?.windows.orEmpty()
+            // 窄屏每个提供方只保留主窗口，避免顶栏挤压右侧按钮。
+            val shown = UsagePresentation.pickWindows(windows)
+                .toList()
+                .filterNotNull()
+                .let { if (compact) it.take(1) else it }
+            if (shown.isNotEmpty()) {
+                UsagePillGroup(provider, shown)
+            }
         }
         Box(
             modifier = Modifier
@@ -569,25 +581,52 @@ private fun ViewSwitchIcon(showTaskIcon: Boolean) {
 }
 
 @Composable
-private fun UsagePill(window: UsageWindow) {
-    val color = when {
-        window.remainingPercentage < 10 -> AgentGridColors.Red
-        window.remainingPercentage < 20 -> AgentGridColors.Orange
-        else -> AgentGridColors.Cyan
+private fun UsagePillGroup(provider: UsageProvider, windows: List<UsageWindow>) {
+    val now by produceState(System.currentTimeMillis()) {
+        while (true) {
+            delay(30_000)
+            value = System.currentTimeMillis()
+        }
     }
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(7.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.semantics(mergeDescendants = true) {},
     ) {
         Text(
-            "${window.label} ${window.remainingPercentage.toInt()}%",
+            provider.shortName,
+            color = providerColor(provider),
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+        )
+        windows.forEach { window -> UsagePill(provider, window, now) }
+    }
+}
+
+@Composable
+private fun UsagePill(provider: UsageProvider, window: UsageWindow, now: Long) {
+    val display = UsagePresentation.display(window, window.key, now)
+    val remaining = display.remaining
+    val color = quotaColor(remaining)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        modifier = Modifier.semantics(mergeDescendants = true) {
+            contentDescription = "${provider.displayName} ${display.label} 额度" +
+                (remaining?.let { "剩余 $it%" } ?: "未知")
+        },
+    ) {
+        Text(
+            "${display.label} ${remaining?.let { "$it%" } ?: "--"}",
             color = AgentGridColors.Muted,
             fontSize = 9.sp,
+            maxLines = 1,
         )
         LinearProgressIndicator(
-            progress = { (window.remainingPercentage / 100).toFloat() },
+            progress = { ((remaining ?: 0) / 100f).coerceIn(0f, 1f) },
             modifier = Modifier
-                .width(56.dp)
+                .width(36.dp)
                 .height(3.dp),
             color = color,
             trackColor = AgentGridColors.Divider,
@@ -807,9 +846,9 @@ private fun TaskMeta(task: TaskSnapshot, alpha: Float) {
         verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            MetaTag(agentBadge(task.source), agentBadgeColor(task.source), alpha)
+            MetaTag(agentBadge(task), agentBadgeColor(task.source), alpha)
             MetaTag(
-                agentOriginLabel(task.source),
+                agentOriginLabel(task),
                 AgentGridColors.Muted,
                 alpha,
             )
@@ -865,7 +904,7 @@ private fun TaskDetails(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         if (task.subagents.isNotEmpty()) {
-            SubagentPanel(task.subagents)
+            SubagentPanel(agentBadge(task), task.subagents)
         }
         task.tokenUsage?.let {
             DetailLine(
@@ -947,7 +986,7 @@ private fun TaskDetails(
 }
 
 @Composable
-private fun SubagentPanel(subagents: List<SubagentSnapshot>) {
+private fun SubagentPanel(agentName: String, subagents: List<SubagentSnapshot>) {
     val now by produceState(
         initialValue = System.currentTimeMillis(),
         key1 = subagents.map { it.id to it.lifecycle },
@@ -966,7 +1005,7 @@ private fun SubagentPanel(subagents: List<SubagentSnapshot>) {
         verticalArrangement = Arrangement.spacedBy(9.dp),
     ) {
         Text(
-            "CODEX (${subagents.size})",
+            "${agentName.uppercase()} (${subagents.size})",
             color = AgentGridColors.Muted,
             fontSize = 10.sp,
             fontWeight = FontWeight.Bold,
@@ -1015,6 +1054,7 @@ private fun SubagentRow(
                 "${lifecycleStatusText(subagent.lifecycle)} · ${formatElapsed(subagent.elapsedAt(now))}",
                 color = color,
                 fontSize = 9.sp,
+                maxLines = 1,
             )
         }
         Text(
@@ -1108,6 +1148,12 @@ private fun lifecycleColor(
     }
 }
 
+internal fun agentBadge(task: TaskSnapshot): String =
+    task.agentName?.takeIf { it.isNotBlank() } ?: agentBadge(task.source)
+
+internal fun agentOriginLabel(task: TaskSnapshot): String =
+    if (task.agentName.isNullOrBlank()) agentOriginLabel(task.source) else "Hook"
+
 private fun agentBadge(source: AgentSource): String = when (source) {
     AgentSource.CODEX_DESKTOP, AgentSource.CODEX_CLI -> "Codex"
     AgentSource.CLAUDE_CODE -> "Claude"
@@ -1130,17 +1176,17 @@ private fun formatElapsed(milliseconds: Long): String {
     val minutes = totalSeconds % 3_600 / 60
     val seconds = totalSeconds % 60
     return if (hours > 0) {
-        "%d:%02d:%02d".format(hours, minutes, seconds)
+        "%d:%02d:%02d".format(Locale.US, hours, minutes, seconds)
     } else {
-        "%02d:%02d".format(minutes, seconds)
+        "%02d:%02d".format(Locale.US, minutes, seconds)
     }
 }
 
-private fun formatTokens(value: Int?): String {
+private fun formatTokens(value: Long?): String {
     val tokens = value ?: return "— tok"
     return when {
-        tokens >= 1_000_000 -> "%.1fm tok".format(tokens / 1_000_000.0)
-        tokens >= 1_000 -> "%.1fk tok".format(tokens / 1_000.0)
+        tokens >= 1_000_000 -> "%.1fm tok".format(Locale.US, tokens / 1_000_000.0)
+        tokens >= 1_000 -> "%.1fk tok".format(Locale.US, tokens / 1_000.0)
         else -> "$tokens tok"
     }
 }

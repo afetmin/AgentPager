@@ -152,13 +152,17 @@ public struct ReplayGuard: Sendable {
 
 public struct StateSnapshotPayload: Codable, Equatable, Sendable {
     public var tasks: [TaskSnapshot]
+    /// Codex 用量。字段名保持不变以兼容旧版手机端。
     public var usage: UsageSnapshot?
+    /// Claude Code 用量；旧版 Bridge 不发送，旧版手机端会忽略。
+    public var claudeUsage: UsageSnapshot?
     public var focusedTaskID: String?
     public var pendingRequests: [PendingRequest]
 
     public init(
         tasks: [TaskSnapshot],
         usage: UsageSnapshot?,
+        claudeUsage: UsageSnapshot? = nil,
         focusedTaskID: String?,
         pendingRequests: [PendingRequest] = []
     ) {
@@ -178,6 +182,7 @@ public struct StateSnapshotPayload: Codable, Equatable, Sendable {
             return sanitizedTask
         }
         self.usage = usage
+        self.claudeUsage = claudeUsage
         self.focusedTaskID = focusedTaskID
         self.pendingRequests = pendingRequests
     }

@@ -34,14 +34,23 @@ public struct ClaudeHookConfiguration: Sendable {
         )
     }
 
+    /// 额度捕获 statusLine 是否已安装（旧版本只装了 Hook，需重新安装才能获得 Claude 额度）。
+    public func isStatusLineInstalled() -> Bool {
+        ClaudeHookInstaller.isStatusLineInstalled(
+            data: try? Data(contentsOf: settingsURL)
+        )
+    }
+
     public func install(
         command: String,
+        statusLineBinaryPath: String? = nil,
         now: Date = .now
     ) throws -> HookConfigurationChange {
         let existing = try? Data(contentsOf: settingsURL)
         let mutation = try ClaudeHookInstaller.install(
             existingData: existing,
-            command: command
+            command: command,
+            statusLineBinaryPath: statusLineBinaryPath
         )
         guard mutation.changed, let contents = mutation.contents else {
             return HookConfigurationChange(changed: false)

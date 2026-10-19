@@ -11,6 +11,7 @@ public partial class MainWindow : Window
 {
     private readonly BridgeRuntime _runtime;
     private bool _refreshing;
+    private IReadOnlyList<IntegrationViewState> _renderedIntegrations = [];
 
     public MainWindow(BridgeRuntime runtime)
     {
@@ -34,6 +35,7 @@ public partial class MainWindow : Window
         PhoneCountText.Text = state.PhoneCount.ToString();
         HookStatusText.Text = state.HookInstalled ? "已写入" : "未安装";
         ClaudeHookStatusText.Text = state.ClaudeHookInstalled ? "已写入" : "未安装";
+        RebuildIntegrations(state.Integrations);
         LastHookText.Text = state.LastHookAt?.ToString("yyyy-MM-dd HH:mm:ss") ?? "尚未收到";
         PairingTextBox.Text = state.PairingText;
         PairingQrImage.Source = QrCode(state.PairingText);
@@ -47,6 +49,78 @@ public partial class MainWindow : Window
             ? (System.Windows.Media.Brush)FindResource("Muted")
             : System.Windows.Media.Brushes.OrangeRed;
         _refreshing = false;
+    }
+
+    /// <summary>仅在状态变化时重建，避免每个 Hook 事件都让按钮闪烁。</summary>
+    private void RebuildIntegrations(IReadOnlyList<IntegrationViewState> items)
+    {
+        if (_renderedIntegrations.SequenceEqual(items)) return;
+        _renderedIntegrations = items;
+        IntegrationList.Children.Clear();
+        var muted = (System.Windows.Media.Brush)FindResource("Muted");
+        foreach (var item in items)
+        {
+            var integration = item.Integration;
+            var status = item.Installed
+                ? (item.Dormant ? "已写入，但客户端总开关已关闭" : "已写入")
+                : item.Detected ? "未安装" : "未检测到客户端";
+            var provenance = integration.Verification == IntegrationVerification.OfficialDocs
+                ? "依据官方文档"
+                : "社区实现 · 未真机验证";
+
+            var panel = new System.Windows.Controls.StackPanel { Margin = new Thickness(0, 0, 0, 20) };
+            panel.Children.Add(new System.Windows.Controls.TextBlock
+            {
+                Text = $"{integration.DisplayName} · {status}",
+                FontWeight = FontWeights.Bold,
+            });
+            panel.Children.Add(new System.Windows.Controls.TextBlock
+            {
+                Text = $"{integration.DisplayConfigPath} · {provenance}",
+                Foreground = muted,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 4, 0, 0),
+            });
+            if (integration.Note is not null)
+                panel.Children.Add(new System.Windows.Controls.TextBlock
+                {
+                    Text = integration.Note,
+                    Foreground = muted,
+                    TextWrapping = TextWrapping.Wrap,
+                    Margin = new Thickness(0, 4, 0, 0),
+                });
+            if (item.Error is not null)
+                panel.Children.Add(new System.Windows.Controls.TextBlock
+                {
+                    Text = item.Error,
+                    Foreground = System.Windows.Media.Brushes.OrangeRed,
+                    TextWrapping = TextWrapping.Wrap,
+                    Margin = new Thickness(0, 4, 0, 0),
+                });
+
+            var install = new System.Windows.Controls.Button
+            {
+                Content = item.Installed ? "修复" : "安装",
+                IsEnabled = item.Detected,
+            };
+            install.Click += (_, _) => _runtime.InstallIntegration(integration.Id);
+            var uninstall = new System.Windows.Controls.Button
+            {
+                Content = "卸载",
+                BorderBrush = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFromString("#FF5D72")!,
+                IsEnabled = item.Installed,
+            };
+            uninstall.Click += (_, _) => _runtime.UninstallIntegration(integration.Id);
+            var buttons = new System.Windows.Controls.StackPanel
+            {
+                Orientation = System.Windows.Controls.Orientation.Horizontal,
+                Margin = new Thickness(0, 10, 0, 0),
+            };
+            buttons.Children.Add(install);
+            buttons.Children.Add(uninstall);
+            panel.Children.Add(buttons);
+            IntegrationList.Children.Add(panel);
+        }
     }
 
     protected override void OnClosing(System.ComponentModel.CancelEventArgs e)

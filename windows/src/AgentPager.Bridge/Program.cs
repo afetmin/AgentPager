@@ -40,6 +40,7 @@ internal static class HookClient
     public static async Task<int> RunAsync(string[] args)
     {
         var source = ResolveSource(args);
+        var agentID = ResolveAgent(args);
         try
         {
             using var input = Console.OpenStandardInput();
@@ -49,10 +50,10 @@ internal static class HookClient
 
             // 按来源解码载荷，仅用于判断事件类型以设置等待时长；解析失败保持 fail-open。
             var isPermission = source == HookSource.Claude
-                ? IsClaudePermission(payloadData)
+                ? IsClaudePermission(payloadData, agentID)
                 : IsCodexPermission(payloadData);
 
-            var envelope = WrapInEnvelope(payloadData, source);
+            var envelope = WrapInEnvelope(payloadData, source, agentID);
             using var client = new TcpClient();
             using var connectTimeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(400));
             await client.ConnectAsync("127.0.0.1", 49361, connectTimeout.Token);
@@ -99,6 +100,18 @@ internal static class HookClient
         return HookSource.Codex;
     }
 
+    /// <summary>解析 --agent &lt;id&gt;：兼容客户端（ZCode、WorkBuddy 等）的标识。</summary>
+    private static string? ResolveAgent(string[] args)
+    {
+        for (var index = 0; index < args.Length - 1; index++)
+        {
+            if (string.Equals(args[index], "--agent", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrEmpty(args[index + 1]))
+                return args[index + 1];
+        }
+        return null;
+    }
+
     private static bool IsCodexPermission(byte[] payloadData)
     {
         try
@@ -109,18 +122,22 @@ internal static class HookClient
         catch (JsonException) { return false; }
     }
 
-    private static bool IsClaudePermission(byte[] payloadData)
+    private static bool IsClaudePermission(byte[] payloadData, string? agentID)
     {
         try
         {
-            var payload = JsonSerializer.Deserialize<ClaudeHookPayload>(payloadData, WireJson.Options);
+            // 兼容客户端可能混用 camelCase 字段名，与桥接服务器的解码保持一致。
+            var json = agentID is not null && JsonNode.Parse(payloadData) is JsonObject payloadObject
+                ? HookPayloadKeyNormalizer.SnakeCasedKeys(payloadObject).ToJsonString()
+                : Encoding.UTF8.GetString(payloadData);
+            var payload = JsonSerializer.Deserialize<ClaudeHookPayload>(json, WireJson.Options);
             return payload?.HookEventName == "PermissionRequest";
         }
         catch (JsonException) { return false; }
     }
 
-    /// <summary>把原始 Hook 载荷包进 {hook_source, payload} 信封。</summary>
-    private static byte[] WrapInEnvelope(byte[] payloadData, HookSource source)
+    /// <summary>把原始 Hook 载荷包进 {hook_source, agent_id?, payload} 信封。</summary>
+    private static byte[] WrapInEnvelope(byte[] payloadData, HookSource source, string? agentID)
     {
         try
         {
@@ -130,6 +147,7 @@ internal static class HookClient
                 ["hook_source"] = source.ToString().ToLowerInvariant(),
                 ["payload"] = payloadNode,
             };
+            if (agentID is not null) envelope["agent_id"] = agentID;
             return System.Text.Encoding.UTF8.GetBytes(envelope.ToJsonString());
         }
         catch (JsonException)
@@ -149,6 +167,12 @@ internal static class Maintenance
         catch { ok = 1; }
         try { _ = new ClaudeHookConfiguration().Uninstall(); }
         catch { ok = 1; }
+        // 属于第三方客户端的配置可能被用户改坏，尽力清理即可，不影响整体卸载结果。
+        foreach (var integration in AgentIntegrations.All)
+        {
+            try { _ = new AgentIntegrationConfiguration(integration).Uninstall(); }
+            catch { }
+        }
         try { StartupRegistration.Disable(); }
         catch { ok = 1; }
         return ok;

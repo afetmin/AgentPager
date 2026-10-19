@@ -41,7 +41,7 @@ AgentPager 将 Codex Desktop、Codex CLI 与 Claude Code 的运行状态通过�
 - **重要时刻主动提醒**：像素动画、8-bit 音效和振动让完成、中断与等待操作不再悄无声息。
 - **手机上直接批准或拒绝**：Codex 发起权限请求时，无需切回电脑即可处理。
 - **子代理进度同屏可见**：父任务会展示正在工作的子代理、耗时、最新步骤与 Token 用量。
-- **额度还剩多少随时可查**：集中查看 Codex 5 小时与周用量窗口，不必等到触顶才发现。
+- **额度还剩多少随时可查**：集中查看 Codex 与 Claude Code 的 5 小时、每周额度窗口和近期 Token 用量，不必等到触顶才发现。Claude 额度需要在 Claude Code CLI 中使用（订阅 Pro/Max），安装 Claude Code Hook 时 AgentPager 会接管 `statusLine` 用于读取额度，并原样转发你已有的状态栏命令，卸载时还原。
 - **闲置旧手机重新派上用场**：原生横屏界面不依赖浏览器，摆在桌面上就是一块专注的 Agent 信息屏。
 
 **最重要的是：它真的很好看(✧∀✧)！！！**
@@ -150,7 +150,7 @@ That is how AgentPager came to be: putting an idle phone back to work as a genui
 - **Get proactive alerts at important moments**: Pixel animations, 8-bit sound effects, and vibration make completions, interruptions, and action requests hard to miss.
 - **Approve or reject requests right from your phone**: Handle Codex permission requests without switching back to your computer.
 - **See sub-agent progress on the same screen**: Parent tasks show active sub-agents, elapsed time, the latest step, and token usage.
-- **Check your remaining quota anytime**: View Codex five-hour and weekly usage windows in one place instead of discovering the limit only after hitting it.
+- **Check your remaining quota anytime**: View Codex and Claude Code five-hour and weekly quota windows plus recent token usage in one place instead of discovering the limit only after hitting it. Claude quota comes from Claude Code CLI sessions (Pro/Max subscriptions): installing the Claude Code hook makes AgentPager wrap `statusLine` to read it, forwarding any status line command you already had and restoring it on uninstall.
 - **Give an old phone a new job**: The native landscape interface does not depend on a browser; leave it on your desk as a focused agent information display.
 
 **Most importantly: it looks really good (✧∀✧)!!!**

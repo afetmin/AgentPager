@@ -25,5 +25,9 @@ let package = Package(
             name: "AgentGridCoreTests",
             dependencies: ["AgentGridCore"]
         ),
+        .testTarget(
+            name: "AgentGridBridgeTests",
+            dependencies: ["AgentGridBridge", "AgentGridCore"]
+        ),
     ]
 )

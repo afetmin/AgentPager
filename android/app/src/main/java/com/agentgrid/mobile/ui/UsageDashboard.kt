@@ -27,6 +27,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -45,9 +46,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.agentgrid.mobile.domain.AgentLifecycle
 import com.agentgrid.mobile.domain.DailyUsagePoint
 import com.agentgrid.mobile.domain.UsageSnapshot
-import com.agentgrid.mobile.domain.UsageWindow
 import com.agentgrid.mobile.render.PixelCoreSurfaceView
 import com.agentgrid.mobile.render.PixelRenderState
+import kotlinx.coroutines.delay
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -56,27 +57,51 @@ private val UsageBarDimmed = Color(0xFF1C3940)
 
 @Composable
 internal fun UsageDashboard(
-    usage: UsageSnapshot?,
+    codexUsage: UsageSnapshot?,
+    claudeUsage: UsageSnapshot?,
     connected: Boolean,
     modifier: Modifier = Modifier,
 ) {
     var selectedRange by remember { mutableStateOf(UsageRange.SEVEN_DAYS) }
+    // null 表示用户尚未手动选择，跟随数据自动挑选默认提供方。
+    var selectedProvider by remember { mutableStateOf<UsageProvider?>(null) }
+    val provider = selectedProvider
+        ?: UsagePresentation.defaultProvider(codexUsage, claudeUsage)
+    val usage = provider.pick(codexUsage, claudeUsage)
     val allPoints = usage?.dailyUsage.orEmpty()
+    // 额度窗口会在界面开着时到期，需要定时刷新“已重置”状态。
+    val now by produceState(System.currentTimeMillis()) {
+        while (true) {
+            delay(30_000)
+            value = System.currentTimeMillis()
+        }
+    }
 
     BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
-            .height(310.dp)
-            .padding(horizontal = 36.dp, vertical = 20.dp),
+            .height(310.dp),
     ) {
-        val quotaWidth = if (maxWidth < 700.dp) 226.dp else 270.dp
+        val narrow = maxWidth < 600.dp
+        val quotaWidth = when {
+            narrow -> 200.dp
+            maxWidth < 700.dp -> 226.dp
+            else -> 270.dp
+        }
 
         Row(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(
+                    horizontal = if (narrow) 20.dp else 36.dp,
+                    vertical = 20.dp,
+                ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             QuotaPanel(
+                provider = provider,
                 usage = usage,
+                now = now,
                 connected = connected,
                 modifier = Modifier
                     .width(quotaWidth)
@@ -85,13 +110,15 @@ internal fun UsageDashboard(
 
             Box(
                 modifier = Modifier
-                    .padding(horizontal = 24.dp)
+                    .padding(horizontal = if (narrow) 14.dp else 24.dp)
                     .width(1.dp)
                     .fillMaxHeight()
                     .background(AgentGridColors.Divider),
             )
 
             HistoryPanel(
+                provider = provider,
+                onProviderSelected = { selectedProvider = it },
                 allPoints = allPoints,
                 selectedRange = selectedRange,
                 onRangeSelected = { selectedRange = it },
@@ -105,13 +132,13 @@ internal fun UsageDashboard(
 
 @Composable
 private fun QuotaPanel(
+    provider: UsageProvider,
     usage: UsageSnapshot?,
+    now: Long,
     connected: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val windows = usage?.windows.orEmpty()
-    val primary = windows.firstOrNull { it.key == "primary" } ?: windows.firstOrNull()
-    val secondary = windows.firstOrNull { it.key == "secondary" }
+    val (primary, secondary) = UsagePresentation.pickWindows(usage?.windows.orEmpty())
 
     Column(
         modifier = modifier,
@@ -138,34 +165,47 @@ private fun QuotaPanel(
                     .size(42.dp)
                     .semantics {
                         contentDescription = if (connected) {
-                            "Codex 空闲"
+                            "${provider.displayName} 空闲"
                         } else {
-                            "Codex 离线"
+                            "${provider.displayName} 离线"
                         }
                     },
             )
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    "CODEX 额度",
+                    "${provider.displayName.uppercase()} 额度",
                     color = AgentGridColors.Text,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
+                    maxLines = 1,
                 )
                 Text(
-                    usage?.planType?.uppercase()?.let { "$it 计划" } ?: "订阅计划",
+                    usage?.planType?.takeIf { it.isNotBlank() }?.uppercase()?.let { "$it 计划" }
+                        ?: "订阅计划",
                     color = AgentGridColors.Muted,
                     fontSize = 9.sp,
+                    maxLines = 1,
                 )
             }
         }
 
-        PrimaryQuota(window = primary)
+        PrimaryQuota(
+            display = UsagePresentation.display(primary, "5H", now),
+            resetText = if (primary == null && provider == UsageProvider.CLAUDE) {
+                "需在 Claude Code CLI 中使用，并在 Mac 端安装 Hook"
+            } else {
+                UsagePresentation.quotaResetText(primary, now)
+            },
+        )
 
-        SecondaryQuota(window = secondary)
+        SecondaryQuota(
+            display = UsagePresentation.display(secondary, "7D", now),
+            resetText = UsagePresentation.quotaResetText(secondary, now),
+        )
 
         Text(
             buildString {
-                append(UsagePresentation.freshnessText(usage?.capturedAt))
+                append(UsagePresentation.freshnessText(usage?.capturedAt, now))
                 if (!connected) append(" · Bridge 离线")
             },
             color = if (connected) AgentGridColors.Dimmed else AgentGridColors.Red,
@@ -176,8 +216,11 @@ private fun QuotaPanel(
 }
 
 @Composable
-private fun PrimaryQuota(window: UsageWindow?) {
-    val remaining = window?.remainingPercentage?.roundToInt()?.coerceIn(0, 100)
+private fun PrimaryQuota(
+    display: QuotaDisplay,
+    resetText: String,
+) {
+    val remaining = display.remaining
     val color = quotaColor(remaining)
 
     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -191,11 +234,13 @@ private fun PrimaryQuota(window: UsageWindow?) {
                 fontSize = 42.sp,
                 lineHeight = 42.sp,
                 fontWeight = FontWeight.Bold,
+                maxLines = 1,
             )
             Text(
-                "${window?.label?.uppercase() ?: "5H"} 剩余",
+                "${display.label.uppercase()} 剩余",
                 color = AgentGridColors.Muted,
                 fontSize = 10.sp,
+                maxLines = 1,
                 modifier = Modifier.padding(bottom = 5.dp),
             )
         }
@@ -205,7 +250,11 @@ private fun PrimaryQuota(window: UsageWindow?) {
                 .fillMaxWidth()
                 .height(5.dp)
                 .semantics {
-                    contentDescription = "主要额度剩余 ${remaining ?: 0}%"
+                    contentDescription = if (remaining == null) {
+                        "主要额度剩余未知"
+                    } else {
+                        "主要额度剩余 $remaining%"
+                    }
                 },
             color = color,
             trackColor = AgentGridColors.Divider,
@@ -213,16 +262,20 @@ private fun PrimaryQuota(window: UsageWindow?) {
             drawStopIndicator = {},
         )
         Text(
-            UsagePresentation.resetText(window?.resetsAt),
+            resetText,
             color = AgentGridColors.Muted,
             fontSize = 10.sp,
+            maxLines = 1,
         )
     }
 }
 
 @Composable
-private fun SecondaryQuota(window: UsageWindow?) {
-    val remaining = window?.remainingPercentage?.roundToInt()?.coerceIn(0, 100)
+private fun SecondaryQuota(
+    display: QuotaDisplay,
+    resetText: String,
+) {
+    val remaining = display.remaining
     val color = quotaColor(remaining)
 
     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -232,15 +285,17 @@ private fun SecondaryQuota(window: UsageWindow?) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                "${window?.label?.uppercase() ?: "7D"} 额度",
+                "${display.label.uppercase()} 额度",
                 color = AgentGridColors.Muted,
                 fontSize = 9.sp,
+                maxLines = 1,
             )
             Text(
                 remaining?.let { "$it% 剩余" } ?: "--% 剩余",
                 color = color,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
+                maxLines = 1,
             )
         }
         LinearProgressIndicator(
@@ -249,7 +304,11 @@ private fun SecondaryQuota(window: UsageWindow?) {
                 .fillMaxWidth()
                 .height(3.dp)
                 .semantics {
-                    contentDescription = "次要额度剩余 ${remaining ?: 0}%"
+                    contentDescription = if (remaining == null) {
+                        "次要额度剩余未知"
+                    } else {
+                        "次要额度剩余 $remaining%"
+                    }
                 },
             color = color,
             trackColor = AgentGridColors.Divider,
@@ -257,15 +316,18 @@ private fun SecondaryQuota(window: UsageWindow?) {
             drawStopIndicator = {},
         )
         Text(
-            UsagePresentation.resetText(window?.resetsAt),
+            resetText,
             color = AgentGridColors.Dimmed,
             fontSize = 9.sp,
+            maxLines = 1,
         )
     }
 }
 
 @Composable
 private fun HistoryPanel(
+    provider: UsageProvider,
+    onProviderSelected: (UsageProvider) -> Unit,
     allPoints: List<DailyUsagePoint>,
     selectedRange: UsageRange,
     onRangeSelected: (UsageRange) -> Unit,
@@ -292,7 +354,7 @@ private fun HistoryPanel(
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(
-                    "近期用量",
+                    "${provider.displayName} 近期用量",
                     color = AgentGridColors.Text,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
@@ -335,11 +397,20 @@ private fun HistoryPanel(
             }
         }
 
-        UsageRangeSelector(
-            selectedRange = selectedRange,
-            onRangeSelected = onRangeSelected,
-            modifier = Modifier.align(Alignment.End),
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ProviderSelector(
+                selected = provider,
+                onSelected = onProviderSelected,
+            )
+            UsageRangeSelector(
+                selectedRange = selectedRange,
+                onRangeSelected = onRangeSelected,
+            )
+        }
 
         AnimatedContent(
             targetState = selectedRange,
@@ -358,6 +429,45 @@ private fun HistoryPanel(
                     .fillMaxWidth()
                     .height(132.dp),
             )
+        }
+    }
+}
+
+@Composable
+private fun ProviderSelector(
+    selected: UsageProvider,
+    onSelected: (UsageProvider) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier.background(AgentGridColors.Surface),
+    ) {
+        UsageProvider.entries.forEach { provider ->
+            val isSelected = provider == selected
+            Box(
+                modifier = Modifier
+                    .height(44.dp)
+                    .widthIn(min = 48.dp)
+                    .background(
+                        if (isSelected) AgentGridColors.SurfaceRaised else Color.Transparent,
+                        RectangleShape,
+                    )
+                    .focusHighlight()
+                    .clickable { onSelected(provider) }
+                    .padding(horizontal = 8.dp)
+                    .semantics {
+                        contentDescription = "查看 ${provider.displayName} 额度与用量"
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    provider.displayName.uppercase(),
+                    color = if (isSelected) providerColor(provider) else AgentGridColors.Muted,
+                    fontSize = 9.sp,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                    maxLines = 1,
+                )
+            }
         }
     }
 }
@@ -490,7 +600,12 @@ private fun UsageBars(
     }
 }
 
-private fun quotaColor(remaining: Int?): Color = when {
+internal fun providerColor(provider: UsageProvider): Color = when (provider) {
+    UsageProvider.CODEX -> AgentGridColors.Blue
+    UsageProvider.CLAUDE -> AgentGridColors.Violet
+}
+
+internal fun quotaColor(remaining: Int?): Color = when {
     remaining == null -> AgentGridColors.Dimmed
     remaining < 10 -> AgentGridColors.Red
     remaining < 20 -> AgentGridColors.Orange

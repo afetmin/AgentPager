@@ -13,16 +13,20 @@ public enum HookSource: String, Codable, Sendable, Equatable {
 /// 正确的解码器与响应格式。
 public struct HookEnvelopePayload: Codable, Equatable, Sendable {
     public var hookSource: HookSource
+    /// 具体客户端标识（`--agent`）。旧版 Hook 不带该字段，视为来源本身（Codex / Claude Code）。
+    public var agentID: String?
     /// 原始 Hook 载荷（Codex 或 Claude），以未类型化 JSON 携带，由服务器按来源解码。
     public var payload: [String: AnyCodable]
 
-    public init(hookSource: HookSource, payload: [String: AnyCodable]) {
+    public init(hookSource: HookSource, agentID: String? = nil, payload: [String: AnyCodable]) {
         self.hookSource = hookSource
+        self.agentID = agentID
         self.payload = payload
     }
 
     private enum CodingKeys: String, CodingKey {
         case hookSource = "hook_source"
+        case agentID = "agent_id"
         case payload
     }
 }

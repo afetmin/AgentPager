@@ -142,6 +142,8 @@ internal class DefaultPhoneSession(
 ) : PhoneSession {
     private val json = Json {
         ignoreUnknownKeys = true
+        // 新版 Bridge 增加未知枚举值或显式 null 时，回退到默认值而不是丢弃整条快照。
+        coerceInputValues = true
         encodeDefaults = true
         explicitNulls = false
     }
@@ -318,6 +320,9 @@ internal class DefaultPhoneSession(
             when (event) {
                 TransportEvent.Opened -> {
                     retryCount = 0
+                    // 新连接的第一帧必须被接受：Mac 重启或时钟回拨后 sentAt 可能小于旧连接的最后一帧。
+                    lastSnapshotSentAt = Long.MIN_VALUE
+                    lastSnapshotMessageID = null
                     reconnectJob?.cancel()
                     reconnectJob = null
                     mutableState.value = mutableState.value.copy(

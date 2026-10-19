@@ -255,6 +255,140 @@ class PhoneSessionTest {
         fixture.close()
     }
 
+    @Test
+    fun `快照携带 Claude 额度时与 Codex 额度分别解码`() = runTest {
+        val fixture = connectedFixture()
+        fixture.transport.emit(
+            TransportEvent.TextReceived(
+                rawSnapshot(
+                    "m1",
+                    100,
+                    """
+                    "usage": {"capturedAt": 5000, "planType": "plus",
+                      "windows": [{"key":"primary","label":"5h","usedPercentage":20,
+                        "remainingPercentage":80,"windowMinutes":300,"resetsAt":9000}]},
+                    "claudeUsage": {"capturedAt": 6000, "planType": "max",
+                      "windows": [
+                        {"key":"primary","label":"5h","usedPercentage":35.5,
+                          "remainingPercentage":64.5,"windowMinutes":300,"resetsAt":9000},
+                        {"key":"secondary","label":"7d","usedPercentage":10,
+                          "remainingPercentage":90,"windowMinutes":10080}],
+                      "dailyUsage": [{"date":"2026-10-18","totalTokens":1234}]},
+                    """,
+                ),
+            ),
+        )
+        runCurrent()
+
+        val snapshot = fixture.session.state.value.snapshot
+        assertEquals("plus", snapshot.usage?.planType)
+        assertEquals(1, snapshot.usage?.windows?.size)
+        val claude = snapshot.claudeUsage!!
+        assertEquals("max", claude.planType)
+        assertEquals(listOf("primary", "secondary"), claude.windows.map { it.key })
+        assertEquals(64.5, claude.windows[0].remainingPercentage, 0.0001)
+        assertEquals(null, claude.windows[1].resetsAt)
+        assertEquals(1234L, claude.dailyUsage.single().totalTokens)
+        assertEquals(null, claude.dailyUsage.single().estimatedCostUSD)
+        fixture.close()
+    }
+
+    @Test
+    fun `旧版 Bridge 不发送 Claude 额度时仍可解码 Codex 额度`() = runTest {
+        val fixture = connectedFixture()
+        fixture.transport.emit(
+            TransportEvent.TextReceived(
+                rawSnapshot(
+                    "m1",
+                    100,
+                    """"usage": {"windows": [{"key":"primary","label":"5h",
+                        "usedPercentage":1,"remainingPercentage":99,"windowMinutes":300}]},""",
+                ),
+            ),
+        )
+        runCurrent()
+
+        val snapshot = fixture.session.state.value.snapshot
+        assertEquals(null, fixture.session.state.value.problem)
+        assertEquals(99.0, snapshot.usage!!.windows.single().remainingPercentage, 0.0001)
+        assertEquals(null, snapshot.claudeUsage)
+        fixture.close()
+    }
+
+    @Test
+    fun `Claude 额度为空对象或显式 null 时不会丢弃整条快照`() = runTest {
+        val fixture = connectedFixture()
+        fixture.transport.emit(
+            TransportEvent.TextReceived(rawSnapshot("m1", 100, """"claudeUsage": {},""")),
+        )
+        runCurrent()
+        assertEquals(null, fixture.session.state.value.problem)
+        assertEquals(emptyList<Any>(), fixture.session.state.value.snapshot.claudeUsage?.windows)
+
+        fixture.transport.emit(
+            TransportEvent.TextReceived(rawSnapshot("m2", 200, """"claudeUsage": null,""")),
+        )
+        runCurrent()
+        assertEquals(null, fixture.session.state.value.problem)
+        assertEquals(null, fixture.session.state.value.snapshot.claudeUsage)
+        fixture.close()
+    }
+
+    @Test
+    fun `未知枚举值回退默认值且终态缺完成时间不会让快照失败`() = runTest {
+        val fixture = connectedFixture()
+        fixture.transport.emit(
+            TransportEvent.TextReceived(
+                """
+                {"version":1,"messageId":"m1","type":"state.snapshot","sentAt":100,
+                 "payload":{"tasks":[{"id":"t","source":"codexCLI","projectName":"P",
+                   "lifecycle":"succeeded","activity":"someFutureActivity",
+                   "capabilities":["approve","futureCapability"],
+                   "tokenUsage":{"total":5000000000},
+                   "startedAt":10,"updatedAt":50}]}}
+                """.trimIndent(),
+            ),
+        )
+        runCurrent()
+
+        assertEquals(null, fixture.session.state.value.problem)
+        val task = fixture.session.state.value.snapshot.tasks.single()
+        assertEquals(null, task.activity)
+        assertEquals(5_000_000_000L, task.tokenUsage?.total)
+        assertEquals(40L, task.elapsedAt(now = 9_999))
+        fixture.close()
+    }
+
+    @Test
+    fun `重新连接后第一帧快照即使 sentAt 更早也会被接受`() = runTest {
+        val fixture = connectedFixture()
+        fixture.transport.emit(
+            TransportEvent.TextReceived(snapshotEnvelope("a", 500, "before")),
+        )
+        runCurrent()
+        fixture.transport.emit(TransportEvent.Failed("断开"))
+        runCurrent()
+        advanceTimeBy(1_000)
+        runCurrent()
+        fixture.transport.emit(TransportEvent.Opened)
+        fixture.transport.emit(
+            TransportEvent.TextReceived(snapshotEnvelope("b", 100, "after")),
+        )
+        runCurrent()
+
+        assertEquals(
+            listOf("after"),
+            fixture.session.state.value.snapshot.tasks.map { it.id },
+        )
+        fixture.close()
+    }
+
+    private fun rawSnapshot(messageID: String, sentAt: Long, payloadFields: String): String =
+        """
+        {"version":1,"messageId":"$messageID","type":"state.snapshot","sentAt":$sentAt,
+         "payload":{$payloadFields "tasks":[]}}
+        """.trimIndent()
+
     private suspend fun kotlinx.coroutines.test.TestScope.connectedFixture(): Fixture {
         val fixture = fixture(pairing())
         fixture.session.start()
