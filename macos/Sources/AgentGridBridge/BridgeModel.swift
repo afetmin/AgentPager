@@ -110,7 +110,7 @@ final class BridgeModel {
                     path == "/pairing" ? pairingTextBox.value : nil
                 }
             )
-            try webSocketServer.start()
+            try webSocketServer.start(serviceID: pairingServiceID)
             self.webSocketServer = webSocketServer
             serviceStatus = "局域网服务运行中"
         } catch {

@@ -14,7 +14,7 @@ let package = Package(
         .executable(name: "AgentGridHooks", targets: ["AgentGridHooks"]),
     ],
     targets: [
-        // 协议与领域模型：只依赖 Foundation/CryptoKit，macOS 与 iOS 共用。
+        // 协议、领域模型与手机会话：只依赖 Foundation/CryptoKit/Network，macOS 与 iOS 共用。
         .target(name: "AgentGridShared"),
         .target(
             name: "AgentGridCore",

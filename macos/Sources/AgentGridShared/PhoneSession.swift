@@ -60,14 +60,18 @@ public struct PhoneSessionState: Equatable, Sendable {
     /// 按提交顺序保留最近的控制请求。
     public var controls: [ControlRecord]
     public var problem: PhoneSessionProblem?
+    /// 每接受一份状态快照加一；快照内容不变时用来区分“收到了新消息”。
+    public var snapshotRevision: Int
 
     public init(
         pairing: PairingSummary? = nil,
         link: LinkState = .disconnected,
         snapshot: StateSnapshotPayload = StateSnapshotPayload(tasks: [], usage: nil, focusedTaskID: nil),
         controls: [ControlRecord] = [],
-        problem: PhoneSessionProblem? = nil
+        problem: PhoneSessionProblem? = nil,
+        snapshotRevision: Int = 0
     ) {
+        self.snapshotRevision = snapshotRevision
         self.pairing = pairing
         self.link = link
         self.snapshot = snapshot
@@ -91,9 +95,12 @@ public protocol PhoneCredentialStore: Sendable {
 /// 手机端会话：保存配对、维持到 Bridge 的连接、接收状态快照，并发送带签名的控制请求。
 public actor PhoneSession {
     private static let maxControlHistory = 50
+    /// 连续失败多少次后才去局域网里重新查找 Bridge。
+    private static let discoveryThreshold = 2
 
     private let store: PhoneCredentialStore
     private let transport: PhoneSessionTransport
+    private let locator: BridgeLocator?
     private let deviceID: String
     private let now: @Sendable () -> Int64
     private let makeRequestID: @Sendable () -> UUID
@@ -116,6 +123,7 @@ public actor PhoneSession {
     public init(
         store: PhoneCredentialStore,
         transport: PhoneSessionTransport,
+        locator: BridgeLocator? = nil,
         deviceID: String,
         now: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1_000) },
         makeRequestID: @escaping @Sendable () -> UUID = { UUID() },
@@ -127,6 +135,7 @@ public actor PhoneSession {
     ) {
         self.store = store
         self.transport = transport
+        self.locator = locator
         self.deviceID = deviceID
         self.now = now
         self.makeRequestID = makeRequestID
@@ -368,6 +377,7 @@ public actor PhoneSession {
             lastSnapshotMessageID = header.messageId
             update {
                 $0.snapshot = envelope.payload
+                $0.snapshotRevision += 1
                 $0.problem = nil
             }
         case "control.ack":
@@ -411,10 +421,29 @@ public actor PhoneSession {
         }
     }
 
-    private func reconnectTimerFired() {
+    private func reconnectTimerFired() async {
         reconnectTask = nil
-        guard !stopped, let pairing else { return }
-        connect(pairing)
+        guard !stopped, var target = pairing else { return }
+        // 旧地址连续失败两次后，尝试通过 Bonjour 找回这台 Mac 的新地址。
+        if let locator, retryCount >= Self.discoveryThreshold,
+           let found = await locator.locate(serviceID: target.serviceID) {
+            // 查找期间可能已解除配对、重新配对或回到前台连上了。
+            guard !stopped, let current = pairing, current == target, state.link != .connected else {
+                return
+            }
+            if found.host != target.host || found.port != Int(target.port), found.port > 0, found.port <= Int(UInt16.max) {
+                target.host = found.host
+                target.port = UInt16(found.port)
+                guard (try? store.save(target)) != nil else {
+                    connect(current)
+                    return
+                }
+                pairing = target
+                update { $0.pairing = target.summary }
+            }
+        }
+        guard !stopped, state.link != .connected else { return }
+        connect(target)
     }
 
     private func expireControl(_ requestID: UUID) {

@@ -106,15 +106,32 @@ private func eventually(
     return await condition()
 }
 
+private final class FakeLocator: BridgeLocator, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _requests: [String] = []
+    var result: BridgeEndpoint?
+
+    init(result: BridgeEndpoint?) { self.result = result }
+
+    var requests: [String] { lock.withLock { _requests } }
+
+    func locate(serviceID: String) async -> BridgeEndpoint? {
+        lock.withLock { _requests.append(serviceID) }
+        return result
+    }
+}
+
 private func makeSession(
     store: MemoryStore = MemoryStore(),
     transport: FakeTransport = FakeTransport(),
+    locator: BridgeLocator? = nil,
     retryDelay: Duration? = nil,
     ackTimeoutMillis: Int = 15_000
 ) -> PhoneSession {
     PhoneSession(
         store: store,
         transport: transport,
+        locator: locator,
         deviceID: "iphone-test",
         makeNonce: { UUID().uuidString },
         sleep: { milliseconds in
@@ -359,4 +376,78 @@ func saveFailureRejectsPairing() async throws {
 
     #expect(await session.pair(try pairingText()) == .rejected(.credentialFailure))
     #expect(transport.connects.isEmpty)
+}
+
+@Test("旧地址连续失败两次后通过 Bonjour 找到新地址并保存")
+func rediscoversBridgeAfterRepeatedFailures() async throws {
+    let store = MemoryStore()
+    let transport = FakeTransport()
+    let locator = FakeLocator(result: BridgeEndpoint(host: "192.168.1.77", port: 49_362))
+    let session = makeSession(store: store, transport: transport, locator: locator, retryDelay: .milliseconds(5))
+    _ = await session.pair(try pairingText())
+
+    transport.emit(.failed("第一次失败"))
+    #expect(await eventually { transport.connects.count == 2 })
+    #expect(locator.requests.isEmpty)
+
+    transport.emit(.failed("第二次失败"))
+    #expect(await eventually { transport.connects.count == 3 })
+
+    #expect(transport.connects.last == "192.168.1.77:49362")
+    #expect(locator.requests == ["mac"])
+    #expect(store.storedPairing?.host == "192.168.1.77")
+    #expect(store.storedPairing?.secret == pairingPayload().secret)
+    #expect(await session.currentState.pairing?.host == "192.168.1.77")
+}
+
+@Test("找不到 Bridge 时继续连接旧地址")
+func keepsOldEndpointWhenNothingFound() async throws {
+    let store = MemoryStore()
+    let transport = FakeTransport()
+    let locator = FakeLocator(result: nil)
+    let session = makeSession(store: store, transport: transport, locator: locator, retryDelay: .milliseconds(5))
+    _ = await session.pair(try pairingText())
+
+    transport.emit(.failed("1"))
+    #expect(await eventually { transport.connects.count == 2 })
+    transport.emit(.failed("2"))
+    #expect(await eventually { transport.connects.count == 3 })
+
+    #expect(Set(transport.connects) == ["192.168.1.8:49362"])
+    #expect(store.storedPairing?.host == "192.168.1.8")
+}
+
+@Test("查找期间解除配对，不再连接也不写回凭据")
+func unpairDuringLookupAbortsReconnect() async throws {
+    final class SlowLocator: BridgeLocator, @unchecked Sendable {
+        func locate(serviceID: String) async -> BridgeEndpoint? {
+            try? await Task.sleep(for: .milliseconds(150))
+            return BridgeEndpoint(host: "10.0.0.9", port: 49_362)
+        }
+    }
+    let store = MemoryStore()
+    let transport = FakeTransport()
+    let session = makeSession(store: store, transport: transport, locator: SlowLocator(), retryDelay: .milliseconds(5))
+    _ = await session.pair(try pairingText())
+    transport.emit(.failed("1"))
+    #expect(await eventually { transport.connects.count == 2 })
+    transport.emit(.failed("2"))
+    try? await Task.sleep(for: .milliseconds(40))
+
+    await session.unpair()
+    try? await Task.sleep(for: .milliseconds(250))
+
+    #expect(transport.connects.count == 2)
+    #expect(store.storedPairing == nil)
+}
+
+@Test("Bonjour 结果选择：只认 id 完全一致的服务，旧版无 id 的一律不采用")
+func bridgeServiceSelection() {
+    typealias C = BridgeServiceSelection.Candidate<Int>
+
+    #expect(BridgeServiceSelection.choose([C(serviceID: "other", handle: 1), C(serviceID: "mine", handle: 2)], serviceID: "mine") == 2)
+    #expect(BridgeServiceSelection.choose([C(serviceID: nil, handle: 1)], serviceID: "mine") == nil)
+    #expect(BridgeServiceSelection.choose([C(serviceID: nil, handle: 1), C(serviceID: "other", handle: 2)], serviceID: "mine") == nil)
+    #expect(BridgeServiceSelection.choose([C(serviceID: nil, handle: 1), C(serviceID: "mine", handle: 2)], serviceID: "mine") == 2)
+    #expect(BridgeServiceSelection.choose([C]([]), serviceID: "mine") == nil)
 }
