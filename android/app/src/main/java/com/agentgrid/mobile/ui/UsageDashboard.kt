@@ -29,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -59,8 +60,9 @@ internal fun UsageDashboard(
     usage: UsageSnapshot?,
     connected: Boolean,
     modifier: Modifier = Modifier,
+    onInteraction: () -> Unit = {},
 ) {
-    var selectedRange by remember { mutableStateOf(UsageRange.SEVEN_DAYS) }
+    var selectedRange by rememberSaveable { mutableStateOf(UsageRange.SEVEN_DAYS) }
     val allPoints = usage?.dailyUsage.orEmpty()
 
     BoxWithConstraints(
@@ -93,8 +95,9 @@ internal fun UsageDashboard(
 
             HistoryPanel(
                 allPoints = allPoints,
+                isPartial = usage?.isPartial == true,
                 selectedRange = selectedRange,
-                onRangeSelected = { selectedRange = it },
+                onRangeSelected = { onInteraction(); selectedRange = it },
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight(),
@@ -265,20 +268,23 @@ private fun SecondaryQuota(window: UsageWindow?) {
 }
 
 @Composable
-private fun HistoryPanel(
+internal fun HistoryPanel(
     allPoints: List<DailyUsagePoint>,
+    isPartial: Boolean,
     selectedRange: UsageRange,
     onRangeSelected: (UsageRange) -> Unit,
     modifier: Modifier = Modifier,
+    partialMessage: String = "部分本地会话文件暂不可读，费用暂不显示",
+    aggregate: UsageAggregate? = null,
 ) {
     val visiblePoints = remember(allPoints, selectedRange) {
         UsagePresentation.pointsForRange(allPoints, selectedRange)
     }
-    val totalTokens = remember(visiblePoints) {
-        UsagePresentation.totalTokens(visiblePoints)
+    val totalTokens = remember(visiblePoints, aggregate) {
+        aggregate?.totalTokens ?: UsagePresentation.totalTokens(visiblePoints)
     }
-    val estimatedCostUSD = remember(visiblePoints) {
-        UsagePresentation.totalEstimatedCostUSD(visiblePoints)
+    val estimatedCostUSD = remember(visiblePoints, isPartial, aggregate) {
+        if (isPartial) null else if (aggregate != null) aggregate.estimatedCostUSD else UsagePresentation.totalEstimatedCostUSD(visiblePoints)
     }
 
     Column(
@@ -298,7 +304,9 @@ private fun HistoryPanel(
                     fontWeight = FontWeight.Bold,
                 )
                 Text(
-                    if (estimatedCostUSD == null) {
+                    if (isPartial) {
+                        "${selectedRange.days} 天 · 已读取用量"
+                    } else if (estimatedCostUSD == null) {
                         "${selectedRange.days} 天合计"
                     } else {
                         "${selectedRange.days} 天 · API 价预估"
@@ -333,6 +341,18 @@ private fun HistoryPanel(
                     letterSpacing = 1.sp,
                 )
             }
+        }
+
+        if (isPartial) {
+            Text(
+                partialMessage,
+                color = AgentGridColors.Orange,
+                fontSize = 9.sp,
+            )
+        }
+
+        if (!isPartial && estimatedCostUSD == null && totalTokens > 0) {
+            Text("部分模型缺少可靠定价，费用预估不完整", color = AgentGridColors.Orange, fontSize = 9.sp)
         }
 
         UsageRangeSelector(

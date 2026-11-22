@@ -4,11 +4,20 @@ using System.Text.Json;
 
 namespace AgentPager.Core;
 
-public sealed class CodexUsageLoader
+public sealed class CodexUsageLoader(IModelUsagePricing? pricing = null, string? codexHome = null)
 {
     private const int HistoryDays = 90;
-    private const int TailSize = 256 * 1024;
-    private sealed record Candidate(string Path, DateTimeOffset ModifiedAt, long Size);
+    private sealed record Candidate(string Path, DateTimeOffset ModifiedAt, long Length);
+    private sealed record FileUsage(Candidate Candidate, DateTimeOffset Start, Dictionary<string, DailyBucket> Buckets);
+    private sealed record FileQuota(Candidate Candidate, UsageSnapshot? Quota);
+    private readonly Dictionary<string, FileUsage> _recentFiles = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, FileQuota> _quotaFiles = new(StringComparer.OrdinalIgnoreCase);
+    public void InvalidatePrices() => _recentFiles.Clear();
+    private sealed class DailyBucket
+    {
+        public Raw Usage { get; set; } = Raw.Zero;
+        public double? Cost { get; set; } = 0;
+    }
     private sealed record Raw(long Input, long Cached, long Output, long Reasoning, long Total)
     {
         public static Raw Zero { get; } = new(0, 0, 0, 0, 0);
@@ -22,138 +31,202 @@ public sealed class CodexUsageLoader
                 Math.Max(0, Total - (previous?.Total ?? 0)));
     }
 
-    public UsageSnapshot? Load(DateTimeOffset? now = null)
+    public UsageSnapshot? Load(DateTimeOffset? now = null, CancellationToken cancellationToken = default)
     {
         var current = now ?? DateTimeOffset.Now;
+        DateTimeOffset start = current.ToLocalTime().Date.AddDays(-(HistoryDays - 1));
+        var partial = false;
         var roots = new[]
         {
-            Path.Combine(CodexPaths.Home, "sessions"),
-            Path.Combine(CodexPaths.Home, "archived_sessions"),
+            Path.Combine(codexHome ?? CodexPaths.Home, "sessions"),
+            Path.Combine(codexHome ?? CodexPaths.Home, "archived_sessions"),
         };
-        var candidates = roots.Where(Directory.Exists).SelectMany(root =>
+        var candidates = new List<Candidate>();
+        foreach (var root in roots.Where(Directory.Exists))
         {
-            try { return Directory.EnumerateFiles(root, "rollout-*.jsonl", SearchOption.AllDirectories); }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return []; }
-        }).Distinct(StringComparer.OrdinalIgnoreCase).Select(path =>
+            try
+            {
+                foreach (var path in Directory.EnumerateFiles(root, "rollout-*.jsonl", SearchOption.AllDirectories))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    try
+                    {
+                        var info = new FileInfo(path);
+                        candidates.Add(new(path, info.LastWriteTimeUtc, info.Length));
+                    }
+                    catch (Exception error) when (error is IOException or UnauthorizedAccessException) { partial = true; }
+                }
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { partial = true; }
+        }
+        if (candidates.Count == 0 && !partial)
         {
-            var info = new FileInfo(path);
-            return new Candidate(path, info.LastWriteTimeUtc, info.Length);
-        }).ToList();
-        if (candidates.Count == 0) return null;
+            _recentFiles.Clear();
+            _quotaFiles.Clear();
+            return null;
+        }
 
         UsageSnapshot? quota = null;
-        foreach (var candidate in candidates.OrderByDescending(value => value.ModifiedAt))
+        var candidatePaths = candidates.Select(value => value.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in _quotaFiles.Keys.Where(path => !candidatePaths.Contains(path)).ToArray()) _quotaFiles.Remove(path);
+        foreach (var candidate in candidates)
         {
-            quota = LatestQuota(candidate);
-            if (quota is not null) break;
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!_quotaFiles.TryGetValue(candidate.Path, out var cachedQuota) || cachedQuota.Candidate != candidate)
+            {
+                try { _quotaFiles[candidate.Path] = cachedQuota = new(candidate, LatestQuota(candidate)); }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException) { partial = true; }
+            }
+            // File metadata is only a cache key. Restoring old history can make its mtime look newer.
+            if (cachedQuota?.Quota is { } record && (quota is null || record.CapturedAt > quota.CapturedAt))
+                quota = record;
         }
 
-        var start = current.Date.AddDays(-(HistoryDays - 1));
-        var buckets = new Dictionary<string, Raw>();
-        foreach (var candidate in candidates.Where(value => value.ModifiedAt >= start))
+        var buckets = new Dictionary<string, DailyBucket>();
+        var recent = candidates.Where(value => value.ModifiedAt >= start).ToList();
+        var recentPaths = recent.Select(value => value.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in _recentFiles.Keys.Where(path => !recentPaths.Contains(path)).ToArray()) _recentFiles.Remove(path);
+        foreach (var candidate in recent)
         {
-            if (candidate.Size <= TailSize)
-                AggregateFile(candidate.Path, start, buckets);
-            else if (LatestCumulative(candidate.Path) is { } latest && latest.Timestamp >= start && !latest.Usage.IsEmpty)
-                Add(buckets, latest.Timestamp.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), latest.Usage);
+            cancellationToken.ThrowIfCancellationRequested();
+            _recentFiles.TryGetValue(candidate.Path, out var file);
+            if (file is null || file.Candidate != candidate || file.Start != start)
+            {
+                try
+                {
+                    var perFile = new Dictionary<string, DailyBucket>();
+                    AggregateFile(candidate.Path, start, perFile, cancellationToken);
+                    _recentFiles[candidate.Path] = file = new(candidate, start, perFile);
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                {
+                    // Keep the last complete contribution for this file, if any, and retry on the next refresh.
+                    partial = true;
+                }
+            }
+            if (file is null) continue;
+            foreach (var (key, value) in file.Buckets)
+            {
+                if (!buckets.TryGetValue(key, out var bucket)) buckets[key] = bucket = new();
+                bucket.Usage += value.Usage;
+                bucket.Cost += value.Cost;
+            }
         }
-        if (quota is null && buckets.Count == 0) return null;
+        if (quota is null && buckets.Count == 0 && !partial) return null;
 
-        var daily = Enumerable.Range(0, HistoryDays).Select(offset =>
+        var daily = partial && buckets.Count == 0 ? [] : Enumerable.Range(0, HistoryDays).Select(offset =>
         {
             var date = start.AddDays(offset).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-            var usage = buckets.GetValueOrDefault(date, Raw.Zero);
-            return new DailyUsagePoint(date, usage.Input, usage.Cached, usage.Output, usage.Reasoning, usage.Total);
+            var bucket = buckets.GetValueOrDefault(date);
+            var usage = bucket?.Usage ?? Raw.Zero;
+            return new DailyUsagePoint(date, usage.Input, usage.Cached, usage.Output, usage.Reasoning, usage.Total,
+                partial ? null : bucket is null ? 0 : bucket.Cost);
         }).ToList();
-        return new(quota?.CapturedAt ?? candidates.Max(value => value.ModifiedAt), quota?.PlanType, quota?.LimitID,
-            quota?.Windows ?? [], daily);
+        return new(quota?.CapturedAt ?? candidates.Select(value => (DateTimeOffset?)value.ModifiedAt).Max(),
+            quota?.PlanType, quota?.LimitID, quota?.Windows ?? [], daily, partial);
     }
 
     private static UsageSnapshot? LatestQuota(Candidate candidate)
     {
-        foreach (var line in TailLines(candidate.Path, 512 * 1024).Reverse())
+        UsageSnapshot? latest = null;
+        foreach (var line in TailLines(candidate.Path, 512 * 1024))
         {
+            if (!line.Contains("\"token_count\"", StringComparison.Ordinal) ||
+                !line.Contains("\"rate_limits\"", StringComparison.Ordinal)) continue;
             try
             {
                 using var document = JsonDocument.Parse(line);
                 var root = document.RootElement;
-                if (root.GetStringOrNull("type") != "event_msg" ||
+                if (root.ValueKind != JsonValueKind.Object || root.GetStringOrNull("type") != "event_msg" ||
                     !root.TryGetProperty("payload", out var payload) ||
+                    payload.ValueKind != JsonValueKind.Object ||
                     payload.GetStringOrNull("type") != "token_count")
                     continue;
                 JsonElement limits;
                 if (payload.TryGetProperty("rate_limits", out var direct)) limits = direct;
-                else if (payload.TryGetProperty("info", out var info) &&
+                else if (payload.TryGetProperty("info", out var info) && info.ValueKind == JsonValueKind.Object &&
                          info.TryGetProperty("rate_limits", out var nested)) limits = nested;
                 else continue;
                 if (limits.ValueKind != JsonValueKind.Object) continue;
+                var limitID = Scalar(limits, "limit_id");
+                if (!string.IsNullOrEmpty(limitID) && !string.Equals(limitID, "codex", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (!DateTimeOffset.TryParse(root.GetStringOrNull("timestamp"), CultureInfo.InvariantCulture,
+                        DateTimeStyles.AssumeUniversal, out var captured) ||
+                    (latest is not null && captured < latest.CapturedAt)) continue;
                 var windows = new List<UsageWindow>();
                 foreach (var key in new[] { "primary", "secondary" })
                 {
                     if (!limits.TryGetProperty(key, out var window) ||
                         window.ValueKind != JsonValueKind.Object) continue;
-                    if (!Number(window, "used_percent", out var used) ||
-                        !Integer(window, "window_minutes", out var minutes)) continue;
-                    DateTimeOffset? resets = Number(window, "resets_at", out var seconds)
+                    if (!Number(window, "used_percent", out var used) || used is < 0 or > 100 || !double.IsFinite(used) ||
+                        !Integer(window, "window_minutes", out var minutes) || minutes <= 0) continue;
+                    DateTimeOffset? resets = Number(window, "resets_at", out var seconds) && seconds is >= 0 and <= 253402300799
                         ? DateTimeOffset.FromUnixTimeSeconds((long)seconds) : null;
                     windows.Add(new(key, WindowLabel(minutes), used, Math.Max(0, 100 - used), minutes, resets));
                 }
                 if (windows.Count == 0) continue;
-                var captured = DateTimeOffset.TryParse(root.GetStringOrNull("timestamp"), out var parsed)
-                    ? parsed : candidate.ModifiedAt;
-                return new(captured, Scalar(limits, "plan_type"), Scalar(limits, "limit_id"), windows, []);
+                latest = new(captured, Scalar(limits, "plan_type"), limitID, windows, []);
             }
             catch (JsonException) { }
         }
-        return null;
+        return latest;
     }
 
-    private static void AggregateFile(string path, DateTimeOffset start, Dictionary<string, Raw> buckets)
+    private void AggregateFile(string path, DateTimeOffset start, Dictionary<string, DailyBucket> buckets,
+        CancellationToken cancellationToken)
     {
         Raw? previous = null;
-        foreach (var line in File.ReadLines(path))
+        string? model = null;
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete,
+            bufferSize: 64 * 1024, FileOptions.SequentialScan);
+        using var reader = new StreamReader(stream, Encoding.UTF8);
+        while (reader.ReadLine() is { } line)
         {
-            if (!line.Contains("\"token_count\"", StringComparison.Ordinal)) continue;
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!line.Contains("\"token_count\"", StringComparison.Ordinal) &&
+                !line.Contains("\"turn_context\"", StringComparison.Ordinal) &&
+                !line.Contains("\"session_meta\"", StringComparison.Ordinal)) continue;
             try
             {
                 using var document = JsonDocument.Parse(line);
                 var root = document.RootElement;
-                if (root.GetStringOrNull("type") != "event_msg" ||
+                if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("payload", out var payload) ||
+                    payload.ValueKind != JsonValueKind.Object) continue;
+                var type = root.GetStringOrNull("type");
+                if (type is "turn_context" or "session_meta")
+                {
+                    // A new context without a model must not inherit a possibly stale model.
+                    if (type == "turn_context" || payload.GetStringOrNull("model") is not null)
+                        model = payload.GetStringOrNull("model");
+                    continue;
+                }
+                if (type != "event_msg" ||
                     !DateTimeOffset.TryParse(root.GetStringOrNull("timestamp"), out var timestamp) ||
-                    !root.TryGetProperty("payload", out var payload) ||
                     payload.GetStringOrNull("type") != "token_count")
                     continue;
-                var info = payload.TryGetProperty("info", out var infoValue) ? infoValue : payload;
+                var info = payload.TryGetProperty("info", out var infoValue) && infoValue.ValueKind == JsonValueKind.Object
+                    ? infoValue : payload;
                 var total = RawUsage(info, "total_token_usage") ?? RawUsage(payload, "total_token_usage");
                 var last = RawUsage(info, "last_token_usage") ?? RawUsage(payload, "last_token_usage");
-                var delta = last ?? total?.Subtract(previous);
+                // Quota-only updates repeat last_token_usage; an unchanged cumulative counter is a reference.
+                var counterReset = total is not null && previous is not null &&
+                    (total.Input < previous.Input || total.Output < previous.Output || total.Total < previous.Total);
+                var delta = total is not null && previous is not null && !counterReset
+                    ? total.Subtract(previous) : last ?? total;
                 if (total is not null) previous = total;
                 if (timestamp < start || delta is null || delta.IsEmpty) continue;
-                Add(buckets, timestamp.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), delta);
+                var key = timestamp.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                if (!buckets.TryGetValue(key, out var bucket)) buckets[key] = bucket = new();
+                bucket.Usage += delta;
+                var eventModel = info.GetStringOrNull("model") ?? payload.GetStringOrNull("model") ?? model;
+                bucket.Cost += delta.Total > 0 && delta.Input == 0 && delta.Output == 0
+                    ? null : pricing?.EstimateCostUSD(eventModel, delta.Input, delta.Cached, delta.Output);
             }
             catch (JsonException) { }
         }
     }
 
-    private static (DateTimeOffset Timestamp, Raw Usage)? LatestCumulative(string path)
-    {
-        foreach (var line in TailLines(path, TailSize).Reverse())
-        {
-            if (!line.Contains("\"token_count\"", StringComparison.Ordinal)) continue;
-            try
-            {
-                using var document = JsonDocument.Parse(line);
-                var root = document.RootElement;
-                if (!DateTimeOffset.TryParse(root.GetStringOrNull("timestamp"), out var timestamp) ||
-                    !root.TryGetProperty("payload", out var payload)) continue;
-                var info = payload.TryGetProperty("info", out var infoValue) ? infoValue : payload;
-                var usage = RawUsage(info, "total_token_usage") ?? RawUsage(payload, "total_token_usage");
-                if (usage is not null) return (timestamp, usage);
-            }
-            catch (JsonException) { }
-        }
-        return null;
-    }
 
     private static IEnumerable<string> TailLines(string path, int maximum)
     {
@@ -178,28 +251,26 @@ public sealed class CodexUsageLoader
     private static long Long(JsonElement value, params string[] keys)
     {
         foreach (var key in keys)
-            if (value.TryGetProperty(key, out var item) && item.TryGetInt64(out var result))
+            if (value.TryGetProperty(key, out var item) && item.ValueKind == JsonValueKind.Number && item.TryGetInt64(out var result))
                 return result;
         return 0;
     }
 
-    private static void Add(Dictionary<string, Raw> buckets, string key, Raw value) =>
-        buckets[key] = buckets.GetValueOrDefault(key, Raw.Zero) + value;
 
     private static bool Number(JsonElement parent, string key, out double value)
     {
         value = 0;
         if (!parent.TryGetProperty(key, out var item)) return false;
-        return item.TryGetDouble(out value) ||
-               item.ValueKind == JsonValueKind.String && double.TryParse(item.GetString(), out value);
+        return item.ValueKind == JsonValueKind.Number && item.TryGetDouble(out value) ||
+               item.ValueKind == JsonValueKind.String && double.TryParse(item.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out value);
     }
 
     private static bool Integer(JsonElement parent, string key, out int value)
     {
         value = 0;
         if (!parent.TryGetProperty(key, out var item)) return false;
-        return item.TryGetInt32(out value) ||
-               item.ValueKind == JsonValueKind.String && int.TryParse(item.GetString(), out value);
+        return item.ValueKind == JsonValueKind.Number && item.TryGetInt32(out value) ||
+               item.ValueKind == JsonValueKind.String && int.TryParse(item.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
     }
 
     private static string? Scalar(JsonElement parent, string key)

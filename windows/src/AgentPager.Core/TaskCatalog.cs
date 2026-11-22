@@ -29,6 +29,7 @@ public interface ICodexPermissionResolver
 
 public sealed class TaskCatalog
 {
+    private const string HermesStatusId = "hermes-desktop:status";
     private readonly List<TaskSnapshot> _tasks;
     private readonly Dictionary<string, PendingRequest> _requests;
     private readonly int _capacity;
@@ -36,7 +37,8 @@ public sealed class TaskCatalog
 
     public TaskCatalog(IEnumerable<TaskSnapshot>? restoring = null, int capacity = 20)
     {
-        _tasks = restoring?.ToList() ?? [];
+        _tasks = restoring?.Select(task => CodexHookPayload.IsChatGPTWebID(task.Id)
+            ? task with { Title = PrefixedTitle("chatgpt网页", task.Title) } : task).ToList() ?? [];
         _requests = [];
         _capacity = capacity;
         Normalize(DateTimeOffset.UtcNow);
@@ -52,10 +54,111 @@ public sealed class TaskCatalog
             _requests.Values.OrderBy(request => request.TaskID).ToList());
     }
 
+    public bool AcceptHermesStatus(HermesHeartbeat heartbeat, DateTimeOffset now)
+    {
+        if (heartbeat.Conversations is not { } conversations)
+            return AcceptHermesStatus(heartbeat.Lifecycle, now);
+        var ids = conversations.Select(row => "hermes-desktop:session:" + row.Id).ToHashSet(StringComparer.Ordinal);
+        var changed = _tasks.RemoveAll(task => task.Source == AgentSource.HermesDesktop && !ids.Contains(task.Id)) > 0;
+        foreach (var reported in conversations)
+        {
+            var row = reported.Lifecycle == AgentLifecycle.Offline ? reported with { ActiveSubagents = 0 }
+                : reported.ActiveSubagents > 0 && reported.Lifecycle is not (AgentLifecycle.WaitingApproval or AgentLifecycle.WaitingAnswer)
+                    ? reported with { Lifecycle = AgentLifecycle.Running } : reported;
+            var id = "hermes-desktop:session:" + row.Id;
+            var agentName = string.IsNullOrWhiteSpace(row.AgentName) ? "Hermes" : row.AgentName.Trim();
+            var title = PrefixedTitle(agentName, row.Title);
+            var previous = _tasks.FirstOrDefault(task => task.Id == id);
+            if (previous?.Lifecycle == row.Lifecycle && previous.Title == title && previous.ProjectName == agentName && previous.ModelUsage == row.ModelUsage && previous.ActiveSubagents == row.ActiveSubagents) continue;
+            if (previous is not null)
+                Upsert(previous with { Title = title, ProjectName = agentName, Lifecycle = row.Lifecycle,
+                    ModelUsage = row.ModelUsage, TokenUsage = row.ModelUsage?.Tokens,
+                    ActiveSubagents = row.ActiveSubagents,
+                    CompletedAt = row.Lifecycle is AgentLifecycle.Succeeded or AgentLifecycle.Interrupted
+                        ? previous.Lifecycle == row.Lifecycle ? previous.CompletedAt ?? now : now : null,
+                    IsUnread = row.Lifecycle == AgentLifecycle.Succeeded && (previous.IsUnread || previous.Lifecycle != row.Lifecycle),
+                    Activity = row.ActiveSubagents > 0 ? AgentActivity.Delegating : row.Lifecycle == AgentLifecycle.Running ? AgentActivity.Thinking : null,
+                    UpdatedAt = previous.Lifecycle == row.Lifecycle ? previous.UpdatedAt : now });
+            else
+                Upsert(new TaskSnapshot(id, AgentSource.HermesDesktop, agentName, title,
+                    null, null, row.ModelUsage?.Tokens, [], row.Lifecycle,
+                    row.ActiveSubagents > 0 ? AgentActivity.Delegating : row.Lifecycle == AgentLifecycle.Running ? AgentActivity.Thinking : null,
+                    now, now, row.Lifecycle is AgentLifecycle.Succeeded or AgentLifecycle.Interrupted ? now : null,
+                    row.Lifecycle == AgentLifecycle.Succeeded, false, false, []) { ModelUsage = row.ModelUsage, ActiveSubagents = row.ActiveSubagents });
+            changed = true;
+        }
+        if (changed) Changed();
+        return changed;
+    }
+
+    internal static string PrefixedTitle(string prefix, string title)
+    {
+        var marker = prefix + " · ";
+        var value = title.Trim();
+        while (value.StartsWith(marker, StringComparison.Ordinal)) value = value[marker.Length..];
+        return marker + value;
+    }
+
+    public bool AcceptHermesStatus(AgentLifecycle lifecycle, DateTimeOffset now)
+    {
+        if (lifecycle is not (AgentLifecycle.Running or AgentLifecycle.Idle or AgentLifecycle.Offline))
+            return false;
+        var removed = _tasks.RemoveAll(task => task.Source == AgentSource.HermesDesktop && task.Id != HermesStatusId) > 0;
+        var previous = _tasks.FirstOrDefault(task => task.Id == HermesStatusId);
+        if (previous?.Lifecycle == lifecycle)
+        {
+            if (removed) Changed();
+            return removed;
+        }
+        Upsert(new(HermesStatusId, AgentSource.HermesDesktop, "Hermes Desktop", "Hermes Desktop",
+            null, null, null, [], lifecycle,
+            lifecycle == AgentLifecycle.Running ? AgentActivity.Thinking : null,
+            now, now, null, false, false, false, []));
+        Changed();
+        return true;
+    }
+
     public bool Accept(CodexHookPayload hook, DateTimeOffset? receivedAt = null)
     {
         var now = receivedAt ?? DateTimeOffset.UtcNow;
         var existing = _tasks.FirstOrDefault(task => task.Id == hook.SessionID);
+        if (hook.HookEventName == CodexHookEventName.SessionMetadata)
+        {
+            // Metadata is not activity. Only an explicit web-to-web rekey may move identity.
+            var rekeyed = false;
+            if (hook.IsChatGPTWeb && CodexHookPayload.IsChatGPTWebID(hook.PreviousSessionID) &&
+                hook.PreviousSessionID != hook.SessionID)
+            {
+                var temporary = _tasks.FirstOrDefault(task => task.Id == hook.PreviousSessionID);
+                if (temporary is not null)
+                {
+                    var latest = existing is null || temporary.UpdatedAt >= existing.UpdatedAt ? temporary : existing;
+                    existing = latest with
+                    {
+                        Id = hook.SessionID,
+                        StartedAt = existing is null || temporary.StartedAt < existing.StartedAt
+                            ? temporary.StartedAt : existing.StartedAt,
+                        IsPinned = temporary.IsPinned || existing?.IsPinned == true,
+                        IsMuted = temporary.IsMuted || existing?.IsMuted == true,
+                    };
+                    _tasks.RemoveAll(task => task.Id == hook.PreviousSessionID);
+                    _requests.Remove(hook.PreviousSessionID!);
+                    Upsert(existing);
+                    rekeyed = true;
+                }
+            }
+            var title = hook.ConversationTitle?.Trim();
+            if (hook.IsChatGPTWeb && !string.IsNullOrWhiteSpace(title)) title = PrefixedTitle("chatgpt网页", title);
+            if (existing is not null && !string.IsNullOrWhiteSpace(title) && existing.Title != title)
+            {
+                Upsert(existing with { Title = title });
+                rekeyed = true;
+            }
+            if (rekeyed) Changed();
+            return true;
+        }
+        if (hook.HookEventName == CodexHookEventName.SessionOffline && (!hook.IsChatGPTWeb || existing is null))
+            return true;
         Upsert(CodexEventReducer.Reduce(hook, existing, now));
         switch (hook.HookEventName)
         {
@@ -63,6 +166,7 @@ public sealed class TaskCatalog
                 _requests[hook.SessionID] = new(hook.SessionID, PendingRequestKind.Approval, hook.ToolInput?.Summary, []);
                 break;
             case CodexHookEventName.Stop:
+            case CodexHookEventName.SessionOffline:
                 _requests.Remove(hook.SessionID);
                 break;
             default:
@@ -135,6 +239,8 @@ public sealed class TaskCatalog
     {
         var task = _tasks.FirstOrDefault(candidate => candidate.Id == control.TaskID);
         if (task is null) return new(requestID, ControlResult.Stale, "任务已结束或不存在");
+        if (task.Source == AgentSource.HermesDesktop)
+            return new(requestID, ControlResult.Unsupported, "Hermes Desktop 状态为只读");
 
         switch (control.Action)
         {
@@ -191,7 +297,8 @@ public sealed class TaskCatalog
             var task = _tasks[index];
             if (!titles.TryGetValue(task.Id, out var codexTitle)) continue;
             var prefix = $"{task.ProjectName} · ";
-            var title = codexTitle == task.ProjectName || codexTitle.StartsWith(prefix, StringComparison.Ordinal)
+            var title = CodexHookPayload.IsChatGPTWebID(task.Id) ? PrefixedTitle("chatgpt网页", codexTitle)
+                : codexTitle == task.ProjectName || codexTitle.StartsWith(prefix, StringComparison.Ordinal)
                 ? codexTitle
                 : prefix + codexTitle;
             if (title == task.Title) continue;
@@ -368,16 +475,28 @@ public static class CodexEventReducer
             AgentLifecycle.Starting, null,
             now, now, null,
             false, false, false, []);
+        if (hook.HookEventName == CodexHookEventName.SessionMetadata)
+            return WebTitle(hook, string.IsNullOrWhiteSpace(hook.ConversationTitle) ? task : task with { Title = hook.ConversationTitle.Trim() });
         task = task with { ProjectName = hook.ProjectName, UpdatedAt = now };
-        return hook.HookEventName switch
+        if (!string.IsNullOrWhiteSpace(hook.ConversationTitle))
+            task = task with { Title = hook.ConversationTitle.Trim() };
+        if (hook.IsChatGPTWeb && hook.HookEventName is not (CodexHookEventName.Stop or CodexHookEventName.SessionOffline))
+            task = task with { CompletedAt = null };
+        var reduced = hook.HookEventName switch
         {
+            CodexHookEventName.SessionOffline when hook.IsChatGPTWeb => task with
+            {
+                Lifecycle = task.IsTerminal ? task.Lifecycle : AgentLifecycle.Offline,
+                Activity = null,
+                Capabilities = [],
+            },
             CodexHookEventName.SessionStart => task with
             {
                 Lifecycle = AgentLifecycle.Starting,
                 Activity = AgentActivity.Thinking,
                 Capabilities = [],
             },
-            CodexHookEventName.UserPromptSubmit => UserPrompt(task, hook.Prompt),
+            CodexHookEventName.UserPromptSubmit => UserPrompt(task, hook.Prompt, hook.ConversationTitle is null),
             CodexHookEventName.PreToolUse => task with
             {
                 Lifecycle = AgentLifecycle.Running,
@@ -408,7 +527,15 @@ public static class CodexEventReducer
             },
             _ => task,
         };
+        if (hook.IsChatGPTWeb && hook.HookEventName == CodexHookEventName.UserPromptSubmit &&
+            string.IsNullOrWhiteSpace(hook.ConversationTitle) && Normalize(hook.Prompt) is { } prompt &&
+            (task.Title == task.ProjectName || task.Title == TaskCatalog.PrefixedTitle("chatgpt网页", task.ProjectName)))
+            reduced = reduced with { Title = prompt[..Math.Min(160, prompt.Length)] };
+        return WebTitle(hook, reduced);
     }
+
+    private static TaskSnapshot WebTitle(CodexHookPayload hook, TaskSnapshot task) => hook.IsChatGPTWeb
+        ? task with { Title = TaskCatalog.PrefixedTitle("chatgpt网页", task.Title) } : task;
 
     public static string Title(string projectName, string? prompt)
     {
@@ -444,7 +571,7 @@ public static class CodexEventReducer
         return AgentActivity.Executing;
     }
 
-    private static TaskSnapshot UserPrompt(TaskSnapshot task, string? prompt)
+    private static TaskSnapshot UserPrompt(TaskSnapshot task, string? prompt, bool allowPromptTitle)
     {
         var normalized = Normalize(prompt);
         return task with
@@ -452,7 +579,7 @@ public static class CodexEventReducer
             Lifecycle = AgentLifecycle.Running,
             Activity = AgentActivity.Thinking,
             UserPrompt = normalized ?? task.UserPrompt,
-            Title = normalized is not null && task.Title == task.ProjectName
+            Title = allowPromptTitle && normalized is not null && task.Title == task.ProjectName
                 ? Title(task.ProjectName, normalized) : task.Title,
             Capabilities = [],
         };

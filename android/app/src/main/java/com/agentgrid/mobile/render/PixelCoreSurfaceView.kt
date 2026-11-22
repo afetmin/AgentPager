@@ -292,7 +292,7 @@ object PixelPalette {
             AgentActivity.EDITING -> Color.rgb(129, 140, 248)
             AgentActivity.EXECUTING -> Color.rgb(251, 146, 60)
             AgentActivity.TESTING -> Color.rgb(96, 165, 250)
-            AgentActivity.DELEGATING,
+            AgentActivity.DELEGATING -> 0xFFA78BFA.toInt()
             AgentActivity.THINKING,
             null,
             -> Color.rgb(232, 121, 249)

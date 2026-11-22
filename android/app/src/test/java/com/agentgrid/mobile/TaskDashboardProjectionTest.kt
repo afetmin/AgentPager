@@ -151,6 +151,19 @@ class TaskDashboardProjectionTest {
     }
 
     @Test
+    fun `空闲和离线的 Hermes 不阻止使用量面板 工作时切换回任务列表`() {
+        val idle = task("hermes-desktop:status", AgentLifecycle.IDLE, NOW)
+            .copy(source = AgentSource.HERMES_DESKTOP)
+        val offline = idle.copy(lifecycle = AgentLifecycle.OFFLINE)
+        val running = idle.copy(lifecycle = AgentLifecycle.RUNNING)
+
+        assertTrue(project(listOf(idle)).dashboardVisible)
+        assertTrue(project(listOf(offline)).dashboardVisible)
+        assertFalse(project(listOf(running), previous = project(listOf(idle))).dashboardVisible)
+        assertEquals(listOf(idle), project(listOf(idle)).orderedTasks)
+    }
+
+    @Test
     fun `手动覆盖会保留直到新增任务或终态任务复活`() {
         val running = task("existing", AgentLifecycle.RUNNING, 10)
         val hidden = project(listOf(running)).togglingDashboard()

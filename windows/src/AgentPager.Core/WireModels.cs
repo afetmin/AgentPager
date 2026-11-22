@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace AgentPager.Core;
 
-public enum AgentSource { CodexDesktop, CodexCLI, ClaudeCode }
+public enum AgentSource { CodexDesktop, CodexCLI, ClaudeCode, HermesDesktop }
 public enum AgentLifecycle { Offline, Idle, Starting, Running, WaitingApproval, WaitingAnswer, Succeeded, Interrupted }
 public enum AgentActivity { Thinking, Reading, Searching, Editing, Executing, Testing, Browsing, Delegating }
 public enum TaskCapability { Approve, Deny, Answer, Interrupt, Retry }
@@ -61,6 +61,10 @@ public sealed record TaskSnapshot(
     bool IsMuted,
     HashSet<TaskCapability> Capabilities)
 {
+    public SessionModelUsage? ModelUsage { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int ActiveSubagents { get; init; }
+
     [JsonIgnore]
     public bool IsTerminal => Lifecycle is AgentLifecycle.Succeeded or AgentLifecycle.Interrupted;
 
@@ -98,7 +102,8 @@ public sealed record UsageSnapshot(
     string? PlanType,
     string? LimitID,
     List<UsageWindow> Windows,
-    List<DailyUsagePoint> DailyUsage);
+    List<DailyUsagePoint> DailyUsage,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool IsPartial = false);
 
 public sealed record PendingRequest(
     string TaskID,
@@ -110,14 +115,23 @@ public sealed record StateSnapshotPayload(
     List<TaskSnapshot> Tasks,
     UsageSnapshot? Usage,
     string? FocusedTaskID,
-    List<PendingRequest> PendingRequests);
+    List<PendingRequest> PendingRequests)
+{
+    // null: legacy producer has no source inventory; []: explicitly none enabled.
+    public List<string>? EnabledSources { get; init; }
+    public HermesUsageSnapshot? HermesUsage { get; init; }
+}
 
 public sealed record PairingPayload(
     int Version,
     string ServiceID,
     string Host,
     ushort Port,
-    string Secret);
+    string Secret,
+    string? CertificateSha256 = null)
+{
+    public override string ToString() => $"PairingPayload {{ Version = {Version}, ServiceID = {ServiceID} }}";
+}
 
 public sealed record ControlPayload(
     string TaskID,

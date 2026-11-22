@@ -6,12 +6,14 @@ import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.agentgrid.mobile.domain.ControlAction
+import com.agentgrid.mobile.domain.EnabledDataSources
 import com.agentgrid.mobile.domain.PendingRequest
 import com.agentgrid.mobile.domain.StateSnapshotPayload
 import com.agentgrid.mobile.domain.TaskDashboardProjection
 import com.agentgrid.mobile.domain.TaskDashboardProjector
 import com.agentgrid.mobile.domain.TaskSnapshot
 import com.agentgrid.mobile.domain.UsageSnapshot
+import com.agentgrid.mobile.domain.HermesUsageSnapshot
 import com.agentgrid.mobile.network.LinkState
 import com.agentgrid.mobile.network.PairingOutcome
 import com.agentgrid.mobile.network.PairingSummary
@@ -29,6 +31,8 @@ data class AgentGridUiState(
     val linkState: LinkState = LinkState.DISCONNECTED,
     val taskProjection: TaskDashboardProjection = TaskDashboardProjection.empty(),
     val usage: UsageSnapshot? = null,
+    val hermesUsage: HermesUsageSnapshot? = null,
+    val enabledSources: List<String>? = null,
     val pendingRequests: List<PendingRequest> = emptyList(),
     val pairingError: String? = null,
     val terminalMode: Boolean = true,
@@ -76,6 +80,14 @@ class AgentGridViewModel(application: Application) : AndroidViewModel(applicatio
                     linkState = session.link,
                     taskProjection = projection,
                     usage = session.snapshot.usage,
+                    hermesUsage = session.snapshot.hermesUsage,
+                    enabledSources = EnabledDataSources.resolve(
+                        session.snapshot,
+                        // Do not carry legacy evidence to a different paired Bridge.
+                        mutableState.value.enabledSources.orEmpty().takeIf {
+                            mutableState.value.pairing?.serviceID == session.pairing?.serviceID
+                        }.orEmpty(),
+                    ),
                     pendingRequests = session.snapshot.pendingRequests,
                 )
                 if (snapshotChanged) scheduleDashboardTransition(projection)

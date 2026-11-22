@@ -1,0 +1,14 @@
+# 验证记录 / Verification · 0.4.3-rc.1
+
+- **Codex:** `CodexPricingSmoke` passed on Linux and on an isolated Windows fixture. The fixture verifies `5h 100% / 7d 95%` wins over the `98% / 54%` stale event even when the stale file has the newer mtime; it also covers out-of-order records, cached file growth, and unrelated quota buckets. Actual account/device comparison is still needed. Windows Bridge Release compiled as a self-contained x64 portable EXE; the WPF UI was not interactively tested for this candidate.
+- **Android:** 85 unit tests passed; debug and unsigned release APKs built; `lintVitalRelease` passed. The test APK has the same signing certificate as the previously distributed r4.2 test APK. `versionName=0.4.3-rc.1`, `versionCode=7`, `minSdk=26`. Instrumentation compiled, but no phone was connected to run it.
+- **Chrome / Edge:** Browser-extension suite: 26 passed. Chrome for Testing loaded the unpacked release ZIP and relayed fixture Chat and Work status through production Bridge code to the phone WebSocket. Edge uses the same ZIP, but was not run separately. No signed-in ChatGPT page or extension-store submission was tested.
+- **Other regressions:** WindowsSettingsSmoke, HermesStatusSmoke, integrated HTTP web-monitor tests, XAML wiring checks and 26 Hermes Node tests passed. Hermes SDK integration was exercised with a fixture; no real-account upgrade or login was performed for this candidate.
+
+## Hermes HTTPS and Windows startup recheck
+
+- **Existing Hermes HTTP installs:** LAN/NAS and other nonloopback HTTP URLs can no longer send account passwords, refresh tokens, or bearer tokens. Existing protected credentials are not silently deleted or used anonymously. Change the service URL to a trusted HTTPS endpoint and sign in again or enter a token for the new URL. Local loopback HTTP still works; nonloopback HTTP remains available only for explicitly enabled anonymous usage with no saved credential.
+- **Windows startup:** Normal launches, including a rejected duplicate, no longer rewrite the Run entry or Windows approval. To change the startup EXE, exit the old tray Bridge, open the intended EXE, and explicitly check login startup in Settings. Windows-disabled entries stay disabled unless explicitly enabled.
+- **Local verification:** `WindowsSettingsSmoke` (including native PKCE fixtures), `--hermes-transport-probe`, all 11 static WPF contract checks, the Windows-targeted WPF Release build, and `git diff --check` passed. The standalone `HermesAuthSmoke` project still fails to compile (`CS0103`: `HermesNativePkceTests` not linked); the full settings smoke ran that fixture successfully. This did not exercise native Windows registry writes, next-login behavior, or a real Hermes account.
+
+最先验收：在 Windows 退出旧托盘 Bridge，原路径替换 EXE，发一条 Codex 请求，让 Codex 写入新额度，然后核对手机上 5h / 7d **剩余**比例。Chrome / Edge 任选一个加载扩展并刷新 ChatGPT；检查 Chat 和 Work 各自的工作状态。不要为签名不匹配先卸载旧 APK。

@@ -1,5 +1,6 @@
 package com.agentgrid.mobile.network
 
+import com.agentgrid.mobile.domain.AgentActivity
 import com.agentgrid.mobile.domain.AgentLifecycle
 import com.agentgrid.mobile.domain.AgentSource
 import com.agentgrid.mobile.domain.ControlAction
@@ -8,6 +9,7 @@ import com.agentgrid.mobile.domain.PairingPayload
 import com.agentgrid.mobile.domain.SignedControlEnvelope
 import com.agentgrid.mobile.domain.StateEnvelope
 import com.agentgrid.mobile.domain.StateSnapshotPayload
+import com.agentgrid.mobile.domain.TaskDashboardProjector
 import com.agentgrid.mobile.domain.TaskSnapshot
 import java.util.Base64
 import kotlinx.coroutines.CoroutineScope
@@ -87,6 +89,43 @@ class PhoneSessionTest {
         assertEquals(PairingOutcome.Connecting, accepted)
         assertEquals(listOf("保存凭据", "连接端点"), fixture.operationLog)
         fixture.close()
+    }
+
+    @Test
+    fun `Windows secure pairing version is accepted and reconnected`() = runTest {
+        val fixture = fixture()
+        try {
+            val encoded = """{"version":2,"serviceID":"windows-fixture","host":"127.0.0.1","port":49365,"secret":"${Base64.getEncoder().encodeToString(SECRET)}","certificateSha256":"${"ab".repeat(32)}"}"""
+            assertEquals(PairingOutcome.Connecting, fixture.session.pair(encoded))
+            fixture.transport.emit(TransportEvent.Failed(null))
+            runCurrent()
+            advanceTimeBy(1_001)
+            assertEquals(2, fixture.transport.connections.size)
+            assertEquals("ab".repeat(32), fixture.transport.connections.first().tls?.certificateSha256)
+            assertEquals(fixture.transport.connections.first(), fixture.transport.connections.last())
+        } finally { fixture.close() }
+    }
+
+    @Test
+    fun `malformed secure QR cannot connect or replace saved pairing`() = runTest {
+        val fixture = fixture(pairing())
+        try {
+            fixture.session.start()
+            val valid = pairing().copy(version = 2, certificateSha256 = "ab".repeat(32))
+            val invalid = listOf(
+                valid.copy(certificateSha256 = null),
+                valid.copy(certificateSha256 = "bad-pin"),
+                valid.copy(version = 1),
+                valid.copy(host = "127.0.0.1/agentgrid"),
+                valid.copy(host = "attacker.invalid@127.0.0.1"),
+                valid.copy(secret = "YQ=="),
+            )
+            invalid.forEach {
+                assertTrue(fixture.session.pair(json.encodeToString(it)) is PairingOutcome.Rejected)
+            }
+            assertEquals(listOf(PhoneEndpoint("127.0.0.1", 8765)), fixture.transport.connections)
+            assertEquals(pairing(), fixture.credentials.load())
+        } finally { fixture.close() }
     }
 
     @Test
@@ -262,6 +301,30 @@ class PhoneSessionTest {
         fixture.transport.emit(TransportEvent.Opened)
         runCurrent()
         return fixture
+    }
+
+    @Test
+    fun `Windows网页监测实际快照能被安卓解码并投影为独立任务`() = runTest {
+        val fixture = connectedFixture()
+        try {
+            val frame = checkNotNull(javaClass.getResourceAsStream("/chatgpt-web-bridge-frame.json"))
+                .bufferedReader().use { it.readText() }
+            fixture.transport.emit(TransportEvent.TextReceived(frame))
+            runCurrent()
+
+            val state = fixture.session.state.value
+            assertEquals(null, state.problem)
+            val snapshot = checkNotNull(state.snapshot)
+            val dashboard = TaskDashboardProjector.project(snapshot, previous = null, now = snapshot.tasks.maxOf { it.updatedAt })
+            val chat = dashboard.visibleTasks.single { it.projectName == "ChatGPT Chat" }
+            val work = dashboard.visibleTasks.single { it.projectName == "ChatGPT Work" }
+            assertEquals(AgentSource.CODEX_DESKTOP, chat.source)
+            assertEquals("Fixture Beta", chat.title)
+            assertEquals(AgentActivity.THINKING, chat.activity)
+            assertEquals(AgentLifecycle.RUNNING, chat.lifecycle)
+            assertEquals(AgentLifecycle.SUCCEEDED, work.lifecycle)
+            assertFalse(dashboard.dashboardVisible)
+        } finally { fixture.close() }
     }
 
     private fun kotlinx.coroutines.test.TestScope.fixture(

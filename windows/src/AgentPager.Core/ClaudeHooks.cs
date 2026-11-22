@@ -111,7 +111,7 @@ public sealed class ClaudeHookConfiguration(string? claudeConfigDir = null)
         {
             var root = JsonNode.Parse(File.ReadAllText(_settingsPath)) as JsonObject;
             var hooks = root?["hooks"] as JsonObject;
-            return hooks is not null && Events.All(spec =>
+            return root?["disableAllHooks"]?.GetValue<bool>() != true && hooks is not null && Events.All(spec =>
                 hooks[spec.Name] is JsonArray groups && groups.Any(node => IsManaged(node as JsonObject)));
         }
         catch { return false; }

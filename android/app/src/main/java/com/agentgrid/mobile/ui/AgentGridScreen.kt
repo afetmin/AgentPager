@@ -54,6 +54,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -133,7 +134,7 @@ fun AgentGridScreen(
     onControl: (String, ControlAction, String?) -> Unit,
     onFocus: (String) -> Unit,
     onToggleDashboard: () -> Unit,
-    onExitTerminal: () -> Unit,
+    onToggleTerminal: () -> Unit,
 ) {
     AgentGridTheme {
         AnimatedContent(
@@ -166,7 +167,7 @@ fun AgentGridScreen(
                     onControl = onControl,
                     onFocus = onFocus,
                     onToggleDashboard = onToggleDashboard,
-                    onExitTerminal = onExitTerminal,
+                    onToggleTerminal = onToggleTerminal,
                 )
             }
         }
@@ -218,16 +219,16 @@ private fun PairingScreen(
             )
             Spacer(Modifier.height(10.dp))
             Text(
-                if (canScan) "扫描 Mac 上的二维码" else "输入 Mac 端配对文本",
+                if (canScan) "扫描电脑上的二维码" else "输入电脑端配对文本",
                 color = AgentGridColors.Cyan,
                 fontSize = 16.sp,
             )
             Spacer(Modifier.height(8.dp))
             Text(
                 if (canScan) {
-                    "在 Mac 上打开 AgentGrid Bridge → 连接，\n扫描其中显示的二维码"
+                    "在电脑上打开 AgentPager Bridge → 连接，\n扫描其中显示的二维码"
                 } else {
-                    "此设备没有摄像头。在 Mac 上打开 AgentGrid Bridge → 连接，\n复制配对文本后在下方粘贴或输入"
+                    "此设备没有摄像头。在电脑上打开 AgentPager Bridge → 连接，\n复制配对文本后在下方粘贴或输入"
                 },
                 color = AgentGridColors.Muted,
                 fontSize = 12.sp,
@@ -238,7 +239,7 @@ private fun PairingScreen(
                 value = manualText,
                 onValueChange = { manualText = it },
                 label = {
-                    Text(if (canScan) "无法扫码？粘贴 Mac 端配对文本" else "Mac 端配对文本")
+                    Text(if (canScan) "无法扫码？粘贴电脑端配对文本" else "电脑端配对文本")
                 },
                 minLines = 3,
                 modifier = Modifier
@@ -286,7 +287,7 @@ private fun TaskTerminal(
     onControl: (String, ControlAction, String?) -> Unit,
     onFocus: (String) -> Unit,
     onToggleDashboard: () -> Unit,
-    onExitTerminal: () -> Unit,
+    onToggleTerminal: () -> Unit,
 ) {
     val projection = state.taskProjection
     val tasks = projection.orderedTasks
@@ -296,6 +297,8 @@ private fun TaskTerminal(
     }
     var expandedTaskID by remember { mutableStateOf<String?>(null) }
     var settingsVisible by remember { mutableStateOf(false) }
+    // Keep the data source selected when the task/dashboard view temporarily changes.
+    var dataUsageTab by rememberSaveable { mutableStateOf(DataUsageTab.CODEX) }
     val visibleTasks = projection.visibleTasks
     val enteringVisibleTaskIDs = projection.enteringVisibleTaskIDs
     val taskListAnchorHeightPx = with(LocalDensity.current) {
@@ -340,6 +343,8 @@ private fun TaskTerminal(
             } else {
                 state.usage?.windows.orEmpty()
             },
+            hermesStatus = tasks.firstOrNull { it.source == AgentSource.HERMES_DESKTOP }
+                ?.lifecycle?.takeIf { showDashboard && state.linkState == LinkState.CONNECTED },
             settingsVisible = settingsVisible,
             dashboardVisible = showDashboard,
             onToggleDashboard = {
@@ -375,9 +380,16 @@ private fun TaskTerminal(
             label = "任务态与状态态切换",
         ) { isDashboardVisible ->
             if (isDashboardVisible) {
-                UsageDashboard(
+                DataDashboard(
                     usage = state.usage,
+                    tasks = tasks,
                     connected = state.linkState == LinkState.CONNECTED,
+                    hermesUsage = state.hermesUsage,
+                    enabledSources = state.enabledSources,
+                    pendingRequests = state.pendingRequests,
+                    visible = showDashboard && !settingsVisible,
+                    selectedTab = dataUsageTab,
+                    onTabSelected = { dataUsageTab = it },
                 )
             } else {
                 LazyColumn(
@@ -463,7 +475,7 @@ private fun TaskTerminal(
                     soundEnabled = enabled
                 },
                 onUnpair = onUnpair,
-                onExitTerminal = onExitTerminal,
+                onToggleTerminal = onToggleTerminal,
             )
         }
 
@@ -490,6 +502,7 @@ private fun TaskTerminal(
 @Composable
 private fun TopControls(
     windows: List<UsageWindow>,
+    hermesStatus: AgentLifecycle?,
     settingsVisible: Boolean,
     dashboardVisible: Boolean,
     onToggleDashboard: () -> Unit,
@@ -501,6 +514,13 @@ private fun TopControls(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        if (hermesStatus != null) {
+            Text(
+                "Hermes · ${lifecycleStatusText(hermesStatus)}",
+                color = lifecycleColor(hermesStatus, null),
+                fontSize = 11.sp,
+            )
+        }
         windows.take(2).forEach { window ->
             UsagePill(window)
         }
@@ -631,12 +651,7 @@ private fun TaskRow(
                 factory = { PixelCoreSurfaceView(it) },
                 update = {
                     it.updateState(
-                        PixelRenderState(
-                            lifecycle = task.lifecycle,
-                            activity = task.activity,
-                            // 模拟器重复点击同一状态时也应从头播放；真实任务不随普通内容更新重置。
-                            revision = if (task.id == "agentgrid-simulator") task.updatedAt else 0,
-                        ),
+                        PixelRenderState.forTask(task),
                     )
                     it.alpha = rowAlpha
                 },
@@ -659,7 +674,16 @@ private fun TaskRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (shouldShowTokenSummary(task)) {
+                if (task.source == AgentSource.HERMES_DESKTOP) {
+                    Text(
+                        HermesUsagePresentation.summary(task),
+                        color = AgentGridColors.Cyan.copy(alpha = rowAlpha),
+                        fontSize = 10.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    CommandTicker(text = taskStatusText(task), color = statusColor(task).copy(alpha = rowAlpha))
+                } else if (shouldShowTokenSummary(task)) {
                     Text(
                         "TOKEN  ${tokenDetailsText(task)}",
                         color = AgentGridColors.Cyan.copy(alpha = rowAlpha),
@@ -681,7 +705,7 @@ private fun TaskRow(
                             overflow = TextOverflow.Ellipsis,
                         )
                         CommandTicker(
-                            text = task.latestStep ?: taskStatusText(task),
+                            text = if (task.hasActiveDelegation) taskStatusText(task) else task.latestStep ?: taskStatusText(task),
                             color = statusColor(task).copy(alpha = rowAlpha),
                         )
                     }
@@ -866,6 +890,13 @@ private fun TaskDetails(
     ) {
         if (task.subagents.isNotEmpty()) {
             SubagentPanel(task.subagents)
+        }
+        task.modelUsage?.let { usage ->
+            DetailLine("MODEL", listOfNotNull(usage.provider, usage.model).joinToString(" · ").ifEmpty { "模型未知" }, AgentGridColors.Cyan)
+            DetailLine("USD", HermesUsagePresentation.costDetails(usage), AgentGridColors.Muted)
+            HermesUsagePresentation.quotaText(task)?.let { quota ->
+                DetailLine("QUOTA", quota, AgentGridColors.Cyan)
+            }
         }
         task.tokenUsage?.let {
             DetailLine(
@@ -1058,7 +1089,7 @@ private fun SettingsPanel(
     soundEnabled: Boolean,
     onSoundEnabledChange: (Boolean) -> Unit,
     onUnpair: () -> Unit,
-    onExitTerminal: () -> Unit,
+    onToggleTerminal: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -1081,12 +1112,17 @@ private fun SettingsPanel(
             onSoundEnabledChange(!soundEnabled)
         }
         PixelButton("解除配对", AgentGridColors.Red, onUnpair)
-        PixelButton("退出专用模式", AgentGridColors.Muted, onExitTerminal)
+        PixelButton(
+            if (state.terminalMode) "退出专用模式" else "进入专用模式",
+            AgentGridColors.Muted,
+            onToggleTerminal,
+        )
     }
 }
 
 private fun statusColor(task: TaskSnapshot): Color =
-    lifecycleColor(task.lifecycle, task.activity)
+    if (task.hasActiveDelegation)
+        AgentGridColors.Violet else lifecycleColor(task.lifecycle, task.activity)
 
 private fun lifecycleColor(
     lifecycle: AgentLifecycle,
@@ -1111,10 +1147,12 @@ private fun lifecycleColor(
 private fun agentBadge(source: AgentSource): String = when (source) {
     AgentSource.CODEX_DESKTOP, AgentSource.CODEX_CLI -> "Codex"
     AgentSource.CLAUDE_CODE -> "Claude"
+    AgentSource.HERMES_DESKTOP -> "Hermes"
 }
 
 private fun agentBadgeColor(source: AgentSource): Color = when (source) {
     AgentSource.CLAUDE_CODE -> AgentGridColors.Violet
+    AgentSource.HERMES_DESKTOP -> AgentGridColors.Cyan
     else -> AgentGridColors.Blue
 }
 
@@ -1122,6 +1160,7 @@ private fun agentOriginLabel(source: AgentSource): String = when (source) {
     AgentSource.CODEX_DESKTOP -> "ChatGPT.app"
     AgentSource.CODEX_CLI -> "Terminal"
     AgentSource.CLAUDE_CODE -> "Claude Code"
+    AgentSource.HERMES_DESKTOP -> "Hermes Desktop"
 }
 
 private fun formatElapsed(milliseconds: Long): String {
@@ -1147,6 +1186,9 @@ private fun formatTokens(value: Int?): String {
 
 private fun tokenDetailsText(task: TaskSnapshot): String {
     val usage = task.tokenUsage ?: return "—"
+    if (task.source == AgentSource.HERMES_DESKTOP) {
+        return "IN ${formatTokens(usage.input)} · OUT ${formatTokens(usage.output)} · TOTAL ${formatTokens(usage.total)}"
+    }
     return "IN ${formatTokens(usage.input)} · CACHE ${formatTokens(usage.cachedInput)} · " +
         "OUT ${formatTokens(usage.output)} · TOTAL ${formatTokens(usage.total)}"
 }

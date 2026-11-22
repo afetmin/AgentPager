@@ -1,0 +1,15 @@
+# Integrated WPF web monitor contract
+
+The existing **AgentPagerBridge.exe** owns the loopback-only HTTP listener at `http://127.0.0.1:49363`. No second executable is required. The LAN/Hermes listener remains unchanged.
+
+- For the integrated Windows Bridge, the Origin must be `chrome-extension://[a-p]{32}` or `moz-extension://<lowercase UUID>`; no page/opaque origins. The deprecated standalone helper remains Chromium-only.
+- Header `X-AgentPager-Token: apw_1119_8f6db7be5a2a45e2a82f4667240bc921` (legacy local capability, not a user secret).
+- `OPTIONS /state` and `OPTIONS /status` accept valid extension origin.
+- `POST /state`: existing reducer payload (`action`, `conversationHash`, `requestId`, optional title/mode/rekey fields) stays compatible. Optional extension evidence `observationId` (empty or document-id:sequence), `observedAt` (nonnegative safe-integer milliseconds), and `signal` (`sidebar-spinner`, `sidebar-idle`, `stop-control`, `composer-idle`, `none`) are validated and accepted but not forwarded into catalog payloads. Freshness/deduplication of this evidence belongs to the extension. Successful valid generation observations update last detection and browser heartbeat.
+- Generation requests from older status-only extensions may include an exactly empty `prompt` string. It is discarded before validation; nonempty or non-string `prompt` values are rejected.
+- **Browser diagnostic heartbeat:** `POST /state` with `{ "type": "browser.heartbeat", "tabCount": 2 }`. `tabCount` is the count of monitored ChatGPT tabs, integer 0..10000. Optional integer `sidebarRows` and `spinningRows` (0..250) describe the freshest tab and are exposed in diagnostics/WPF; omitted values are null/unknown. No tab URL, chat body, browser identity or credentials. This updates browser heartbeat even when no generation is active; does not create tasks or renew generation leases.
+- `GET /status` authenticated as above. JSON: `enabled`, `listening`, `status` (`disabled`, `waiting-browser`, `connected`, `browser-offline`, `listener-error`), `lastBrowserHeartbeatAt`, `lastDetectionAt`, `lastDetectionAction`, `tabCount`, `activeSessionCount`, `lastError`, `sidebarRows`, `spinningRows`. Datetimes ISO UTC/null. POST replies also include these fields and `ok`. Disabled POST returns HTTP 200, `ok:true`, `enabled:false`, and does not ingest statuses.
+- WPF and its existing tray menu can enable/disable monitoring; setting persists. Disabling clears only active web sessions to Offline (never successful completion); it does not stop Hermes/Codex/Claude or the HTTP diagnostic listener. Historical heartbeat/detection timestamps remain visible. Re-enable starts waiting for a fresh browser heartbeat, never treating a historical heartbeat as a new connection.
+- Generation reducer maintains its existing 100-second per-request lease, title handling, metadata/rekey, finish and retry semantics. Browser heartbeat is separate from generation heartbeat.
+
+Integration-owned files: WPF C#/XAML and reducer changes. Extension JS/manifest/popup are owned by the parent task.

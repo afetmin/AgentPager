@@ -11,23 +11,31 @@ kotlin {
     }
 }
 
+val communityBuild = providers.gradleProperty("agentpagerCommunity")
+    .map { it.toBooleanStrict() }
+    .orElse(false)
+    .get()
+val agentPagerAppId = if (communityBuild) "io.github.ealin1994.agentpager" else "com.agentgrid.mobile"
+
 android {
     namespace = "com.agentgrid.mobile"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.agentgrid.mobile"
+        applicationId = agentPagerAppId
+        manifestPlaceholders["agentPagerAppLabel"] = if (communityBuild) "@string/app_name_community" else "@string/app_name"
+        manifestPlaceholders["agentPagerTargetPackage"] = agentPagerAppId
         minSdk = 26
         targetSdk = 36
         versionCode = providers.environmentVariable("AGENTPAGER_VERSION_CODE")
             .orNull
             ?.toIntOrNull()
-            ?: 1
+            ?: 7
         versionName = providers.environmentVariable("AGENTPAGER_VERSION_NAME")
             .orNull
-            ?: "0.3.1"
+            ?: "0.4.3-rc.1"
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = "com.agentgrid.mobile.DedicatedModeRegressionTest"
     }
 
     buildFeatures {

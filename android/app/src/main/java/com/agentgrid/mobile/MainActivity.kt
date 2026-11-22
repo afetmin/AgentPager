@@ -18,8 +18,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        enterTerminalMode()
+        applyTerminalMode(viewModel.state.value.terminalMode)
         importPairing(intent)
 
         setContent {
@@ -31,9 +30,10 @@ class MainActivity : ComponentActivity() {
                 onControl = viewModel::control,
                 onFocus = viewModel::focus,
                 onToggleDashboard = viewModel::toggleDashboard,
-                onExitTerminal = {
-                    viewModel.setTerminalMode(false)
-                    exitTerminalMode()
+                onToggleTerminal = {
+                    val enabled = !viewModel.state.value.terminalMode
+                    viewModel.setTerminalMode(enabled)
+                    applyTerminalMode(enabled)
                 },
             )
         }
@@ -52,7 +52,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun applyTerminalMode(enabled: Boolean) {
+        if (enabled) enterTerminalMode() else exitTerminalMode()
+    }
+
     private fun enterTerminalMode() {
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         WindowInsetsControllerCompat(window, window.decorView).apply {
             hide(WindowInsetsCompat.Type.systemBars())

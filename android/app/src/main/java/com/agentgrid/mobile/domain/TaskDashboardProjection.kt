@@ -89,8 +89,10 @@ object TaskDashboardProjector {
             visibleTaskIDs
                 .filterNotTo(linkedSetOf()) { it in previous.visibleTaskIDs }
         }
-        val terminalStates = orderedTasks.associate { it.id to it.isTerminal }
-        val hasNewTask = previous != null && orderedTasks.any { task ->
+        // An idle/offline Hermes row is a presence indicator, not an unfinished task.
+        val dashboardTasks = orderedTasks.filterNot { it.isHermesPresenceOnly }
+        val terminalStates = dashboardTasks.associate { it.id to it.isTerminal }
+        val hasNewTask = previous != null && dashboardTasks.any { task ->
             val wasTerminal = previous.terminalStates[task.id]
             wasTerminal == null || (wasTerminal && !task.isTerminal)
         }
@@ -100,12 +102,12 @@ object TaskDashboardProjector {
             manualDashboardOverride
         }
         val nextDashboardAt = nextDashboardAt(
-            tasks = orderedTasks,
+            tasks = dashboardTasks,
             now = now,
             idleDelayMillis = idleDelayMillis,
         )
         val automaticDashboardVisible =
-            nextDashboardAt == null && orderedTasks.none { !it.isTerminal }
+            nextDashboardAt == null && dashboardTasks.none { !it.isTerminal || it.hasActiveDelegation }
         val focusedTaskID = preferredFocusedTaskID
             ?.takeIf { preferred -> orderedTasks.any { it.id == preferred } }
             ?: previous?.focusedTaskID
@@ -149,7 +151,7 @@ object TaskDashboardProjector {
         now: Long,
         idleDelayMillis: Long,
     ): Long? {
-        if (tasks.any { !it.isTerminal }) return null
+        if (tasks.any { !it.isTerminal || it.hasActiveDelegation }) return null
         val lastFinishedAt = tasks.maxOfOrNull {
             it.completedAt ?: it.updatedAt
         } ?: return null
@@ -175,8 +177,13 @@ object TaskDashboardProjector {
             else -> attentionPriority
         }
 
+    private val TaskSnapshot.isHermesPresenceOnly: Boolean
+        get() = source == AgentSource.HERMES_DESKTOP &&
+            !hasActiveDelegation &&
+            (lifecycle == AgentLifecycle.IDLE || lifecycle == AgentLifecycle.OFFLINE)
+
     private val TaskSnapshot.sortGroup: Int
-        get() = when (lifecycle) {
+        get() = if (isHermesPresenceOnly) -1 else when (lifecycle) {
             AgentLifecycle.WAITING_APPROVAL -> 3
             AgentLifecycle.RUNNING -> 2
             AgentLifecycle.SUCCEEDED -> 0

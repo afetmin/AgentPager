@@ -13,6 +13,9 @@ enum class AgentSource {
 
     @SerialName("claudeCode")
     CLAUDE_CODE,
+
+    @SerialName("hermesDesktop")
+    HERMES_DESKTOP,
 }
 
 @Serializable
@@ -127,6 +130,8 @@ data class TaskSnapshot(
     val userPrompt: String? = null,
     val latestStep: String? = null,
     val tokenUsage: TokenUsage? = null,
+    val modelUsage: SessionModelUsage? = null,
+    val activeSubagents: Int = 0,
     val subagents: List<SubagentSnapshot> = emptyList(),
     val lifecycle: AgentLifecycle,
     val activity: AgentActivity? = null,
@@ -138,6 +143,11 @@ data class TaskSnapshot(
     val isMuted: Boolean = false,
     val capabilities: Set<TaskCapability> = emptySet(),
 ) {
+    val hasActiveDelegation: Boolean
+        get() = activeSubagents > 0 && lifecycle in setOf(
+            AgentLifecycle.IDLE, AgentLifecycle.STARTING, AgentLifecycle.RUNNING, AgentLifecycle.SUCCEEDED,
+        )
+
     val isTerminal: Boolean
         get() = lifecycle in setOf(
             AgentLifecycle.SUCCEEDED,
@@ -196,6 +206,38 @@ data class UsageSnapshot(
     val limitID: String? = null,
     val windows: List<UsageWindow> = emptyList(),
     val dailyUsage: List<DailyUsagePoint> = emptyList(),
+    val isPartial: Boolean = false,
+)
+
+@Serializable
+data class ModelUsagePoint(
+    val date: String,
+    val model: String,
+    val totalTokens: Long,
+    val reasoningEffort: String? = null,
+)
+
+@Serializable
+data class ModelTokenTotal(val model: String, val totalTokens: Long, val reasoningEffort: String? = null)
+
+@Serializable
+data class HermesUsagePeriod(
+    val days: Int,
+    val models: List<ModelTokenTotal>,
+    val totalTokens: Long,
+    val estimatedCostUSD: Double? = null,
+    val isPartial: Boolean = false,
+)
+
+@Serializable
+data class HermesUsageSnapshot(
+    val capturedAt: Long? = null,
+    val dailyUsage: List<DailyUsagePoint> = emptyList(),
+    val modelUsage: List<ModelUsagePoint> = emptyList(),
+    val isPartial: Boolean = false,
+    val dateBasis: String = "session-start",
+    val periods: List<HermesUsagePeriod> = emptyList(),
+    val sourceNote: String? = null,
 )
 
 @Serializable
@@ -204,6 +246,9 @@ data class StateSnapshotPayload(
     val usage: UsageSnapshot? = null,
     val focusedTaskID: String? = null,
     val pendingRequests: List<PendingRequest> = emptyList(),
+    val hermesUsage: HermesUsageSnapshot? = null,
+    // null is a legacy Bridge with unknown capabilities; [] explicitly disables every source.
+    val enabledSources: List<String>? = null,
 )
 
 @Serializable
@@ -308,4 +353,7 @@ data class PairingPayload(
     val host: String,
     val port: Int,
     val secret: String,
-)
+    val certificateSha256: String? = null,
+) {
+    override fun toString(): String = "PairingPayload(version=$version, serviceID=$serviceID)"
+}

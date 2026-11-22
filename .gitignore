@@ -4,6 +4,11 @@
 DerivedData/
 macos/.swiftpm/
 android/.gradle/
+android/.kotlin/
+**/__pycache__/
+**/node_modules/
+**/.pytest_cache/
+deliverables/
 android/local.properties
 android/**/build/
 windows/**/bin/

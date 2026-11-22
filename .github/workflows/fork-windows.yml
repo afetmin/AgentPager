@@ -1,0 +1,63 @@
+name: AgentPager fork - verify Windows installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Fork release version (for example 0.4.3-rc.2; no v prefix)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    if: github.repository == 'ealin1994/AgentPager'
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '8.0.419'
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install pinned Inno Setup compiler
+        shell: pwsh
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP 'innosetup-6.4.3.exe'
+          $dir = Join-Path $env:RUNNER_TEMP 'Inno Setup 6'
+          Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-6_4_3/innosetup-6.4.3.exe' -OutFile $installer
+          if ((Get-FileHash $installer -Algorithm SHA256).Hash -ne 'f3c42116542c4cc57263c5ba6c4feabfc49fe771f2f98a79d2f7628b8762723b') {
+            throw 'Inno Setup bootstrap hash mismatch'
+          }
+          $install = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER', "/DIR=`"$dir`"") -PassThru -Wait
+          $compiler = Join-Path $dir 'ISCC.exe'
+          if ($install.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $compiler -PathType Leaf)) {
+            throw 'Inno Setup bootstrap failed'
+          }
+          "INNO_SETUP_COMPILER=$compiler" >> $env:GITHUB_ENV
+      - name: Run packaging contracts and build/test standalone Windows artifacts
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          python -m unittest discover -s scripts/tests -v
+          if ($LASTEXITCODE -ne 0) { throw 'Packaging contracts failed' }
+          ./scripts/package-windows-fork.ps1 -Version $env:RELEASE_VERSION -VerifyInDisposableProfile `
+            -OutputDirectory (Join-Path $env:RUNNER_TEMP 'agentpager-windows')
+      - name: Save verified Windows inputs (not a GitHub Release)
+        uses: actions/upload-artifact@v7
+        with:
+          name: agentpager-windows-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/agentpager-windows/AgentPager-Windows-Setup.exe
+            ${{ runner.temp }}/agentpager-windows/AgentPager-Windows-Portable.zip
+            ${{ runner.temp }}/agentpager-windows/windows-smoke.json
+            ${{ runner.temp }}/agentpager-windows/installer-smoke-logs/*.log
+          if-no-files-found: error
+          compression-level: 0

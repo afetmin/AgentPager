@@ -61,3 +61,19 @@ jobs:
       - name: 构建解决方案
         shell: powershell
         run: dotnet build windows/AgentPager.Windows.sln -c Release
+      - name: 验证 Hermes 状态接入
+        run: dotnet run --project windows/tests/HermesStatusSmoke -c Release
+      - name: 验证 ChatGPT 网页状态接入
+        run: dotnet run --project tools/ChatGPTWebMonitor/tests/WebMonitorTests.csproj -c Release
+
+  hermes:
+    name: Hermes 桌面插件测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+      - run: node --test hermes/plugin.test.mjs
+      - run: npm ci --prefix tools/ChatGPTWebMonitor/tests --ignore-scripts
+      - run: npm test --prefix tools/ChatGPTWebMonitor/tests

@@ -28,7 +28,8 @@ public sealed class TaskSnapshotPersistence(string? filePath = null)
     public void Save(IEnumerable<TaskSnapshot> tasks)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(_filePath)!);
-        var values = tasks.Select(task => task with { LatestStep = null, Subagents = [] }).ToList();
+        var values = tasks.Where(task => task.Source != AgentSource.HermesDesktop)
+            .Select(task => task with { LatestStep = null, Subagents = [] }).ToList();
         var temporary = _filePath + ".tmp";
         File.WriteAllText(temporary, JsonSerializer.Serialize(values, WireJson.Options));
         File.Move(temporary, _filePath, true);

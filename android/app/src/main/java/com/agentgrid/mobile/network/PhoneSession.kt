@@ -110,7 +110,12 @@ internal interface PhoneCredentialStore {
 internal data class PhoneEndpoint(
     val host: String,
     val port: Int,
+    val tls: PhoneTlsPairing? = null,
 )
+
+internal data class PhoneTlsPairing(val certificateSha256: String, val secret: String) {
+    override fun toString() = "PhoneTlsPairing(redacted)"
+}
 
 internal sealed interface TransportEvent {
     data object Opened : TransportEvent
@@ -397,7 +402,8 @@ internal class DefaultPhoneSession(
 
     private fun connectLocked(value: PairingPayload) {
         mutableState.value = mutableState.value.copy(link = LinkState.CONNECTING)
-        transport.connect(PhoneEndpoint(value.host, value.port))
+        val tls = value.certificateSha256?.let { PhoneTlsPairing(it, value.secret) }
+        transport.connect(PhoneEndpoint(value.host, value.port, tls))
     }
 
     private fun disconnectAndRetryLocked() {
@@ -429,13 +435,22 @@ internal class DefaultPhoneSession(
     }
 
     private fun validatePairing(value: PairingPayload): PhoneSessionProblem? {
-        if (value.version != 1) return PhoneSessionProblem.UnsupportedVersion
-        if (value.host.isBlank() || value.port !in 1..65_535) {
+        when (value.version) {
+            1 -> if (value.certificateSha256 != null) return PhoneSessionProblem.InvalidPairing
+            2 -> if (value.certificateSha256?.matches(Regex("[0-9a-f]{64}")) != true) {
+                return PhoneSessionProblem.InvalidPairing
+            }
+            else -> return PhoneSessionProblem.UnsupportedVersion
+        }
+        if (value.port !in 1..65_535 || normalizedPhoneHost(value.host) == null) {
             return PhoneSessionProblem.InvalidEndpoint
         }
-        val validSecret = value.secret.isNotBlank() && runCatching {
-            Base64.getDecoder().decode(value.secret)
-        }.getOrNull()?.isNotEmpty() == true
+        val secretBytes = runCatching { Base64.getDecoder().decode(value.secret) }.getOrNull()
+        val validSecret = if (value.version == 2) {
+            secretBytes?.size == 32 && Base64.getEncoder().encodeToString(secretBytes) == value.secret
+        } else {
+            secretBytes?.isNotEmpty() == true
+        }
         if (!validSecret) return PhoneSessionProblem.InvalidSecret
         return null
     }

@@ -71,6 +71,14 @@ class UsagePresentationTest {
     }
 
     @Test
+    fun `partial local reads suppress cost but retain available tokens`() {
+        val points = listOf(DailyUsagePoint(date = "2026-11-21", totalTokens = 1200, estimatedCostUSD = 0.25))
+        assertEquals(null, UsagePresentation.totalEstimatedCostUSD(points, isPartial = true))
+        assertEquals(0.25, UsagePresentation.totalEstimatedCostUSD(points, isPartial = false)!!, 0.0001)
+        assertEquals(1200L, UsagePresentation.totalTokens(points))
+    }
+
+    @Test
     fun `额度重置同时支持倒计时和具体日期`() {
         val now = Instant.parse("2026-07-26T12:00:00Z").toEpochMilli()
 

@@ -1,7 +1,7 @@
 <Window x:Class="AgentPager.Bridge.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="AgentPager Bridge" Width="760" Height="560"
+        Title="AgentPager Bridge r4.3-rc.1" Width="760" Height="560"
         MinWidth="700" MinHeight="520"
         WindowStartupLocation="CenterScreen"
         Background="#090D12" Foreground="#E8F4FF"
@@ -196,10 +196,12 @@
             </Grid.ColumnDefinitions>
             <Image Width="54" Height="54" Source="Assets/agentpager-icon.png"/>
             <StackPanel Grid.Column="2" VerticalAlignment="Center">
-                <TextBlock Text="AGENTPAGER BRIDGE" FontFamily="{StaticResource PixelFont}"
+                <TextBlock Text="AGENTPAGER BRIDGE · r4.3-rc.1" FontFamily="{StaticResource PixelFont}"
                            FontSize="20" FontWeight="Bold"/>
                 <TextBlock x:Name="ServiceStatusText" Margin="0,5,0,0"
                            Foreground="{StaticResource Cyan}"/>
+                <TextBlock x:Name="WebSummaryText" Margin="0,5,0,0" FontSize="12"
+                           Foreground="{StaticResource Muted}"/>
             </StackPanel>
             <Border Grid.Column="3" Padding="12,8" Background="{StaticResource Surface}"
                     BorderBrush="{StaticResource Border}" BorderThickness="1">
@@ -239,9 +241,6 @@
                                  IsReadOnly="True" VerticalScrollBarVisibility="Auto"/>
                         <Button Content="复制配对文本" HorizontalAlignment="Left" Margin="0,10,0,0"
                                 Click="CopyPairing_Click"/>
-                        <CheckBox x:Name="StartupCheckBox" Content="登录 Windows 时启动"
-                                  Margin="0,18,0,0" Checked="StartupCheckBox_Changed"
-                                  Unchecked="StartupCheckBox_Changed"/>
                     </StackPanel>
                 </Grid>
             </TabItem>
@@ -299,14 +298,155 @@
                                Text="Bridge 不在线时 Hook 自动放行，不会阻塞 Claude Code。"/>
                 </StackPanel>
             </TabItem>
+
+            <TabItem Header="CHATGPT WEB">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="28">
+                        <TextBlock Text="ChatGPT 网页状态监控" FontSize="18" FontWeight="Bold"
+                                   Foreground="{StaticResource Cyan}"/>
+                        <CheckBox x:Name="WebMonitorCheckBox" Margin="0,16,0,0" Content="启用网页监控（仅本机浏览器）"
+                                  Checked="WebMonitorCheckBox_Changed" Unchecked="WebMonitorCheckBox_Changed"/>
+                        <Border Margin="0,16,0,0" Padding="18" Background="#090D12"
+                                BorderBrush="{StaticResource Border}" BorderThickness="1">
+                            <StackPanel>
+                                <TextBlock x:Name="WebStatusText" Foreground="{StaticResource Cyan}" FontWeight="Bold" TextWrapping="Wrap"/>
+                                <TextBlock x:Name="WebHeartbeatText" Margin="0,10,0,0" Foreground="{StaticResource Muted}" TextWrapping="Wrap"/>
+                                <TextBlock x:Name="WebDetectionText" Margin="0,8,0,0" Foreground="{StaticResource Muted}" TextWrapping="Wrap"/>
+                                <TextBlock x:Name="WebTabsText" Margin="0,8,0,0" Foreground="{StaticResource Muted}"/>
+                                <TextBlock x:Name="WebErrorText" Margin="0,8,0,0" Foreground="#FF5D72" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </Border>
+                        <TextBlock Margin="0,16,0,0" Foreground="{StaticResource Muted}" TextWrapping="Wrap"
+                                   Text="网页桥接已内置于当前 AgentPagerBridge.exe，无需启动第二个程序。请安装浏览器扩展并打开 ChatGPT；收到空闲浏览器心跳也会显示已连接。只同步会话标题、哈希标识和状态，不读取聊天正文。"/>
+                        <TextBlock Margin="0,10,0,0" Foreground="{StaticResource Muted}" TextWrapping="Wrap"
+                                   Text="本机端点：127.0.0.1:49363。关闭监控会清除网页的工作中状态，不会停止 Hermes、Codex 或 Claude。100 秒没有浏览器心跳会显示离线。"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="HERMES">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="28">
+                        <TextBlock Text="用量统计 · Hermes HTTP 服务" FontSize="18" FontWeight="Bold" Foreground="{StaticResource Cyan}"/>
+                        <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" Foreground="{StaticResource Muted}"
+                                   Text="填写现有 Hermes Dashboard 服务地址（含端口，可含反向代理前缀），使用 Hermes 服务账号登录，不是模型供应商 API Key。仅只读拉取原生统计，每次至少间隔 60 秒；不会在 NAS 或服务器安装插件，也不会关闭服务认证。"/>
+                        <TextBlock Margin="0,8,0,0" Foreground="#FFBD69" TextWrapping="Wrap"
+                                   Text="局域网和远程服务的登录及令牌需要 HTTPS。本机回环可使用 HTTP；其他 HTTP 地址仅允许明确启用的匿名统计，HTTP 不会加密统计。URL 不允许用户名、密码、查询参数或片段。登录密码不保存、不回填。"/>
+                        <TextBlock Text="服务 URL（例如 https://hermes.example:8443）" Margin="0,12,0,0"/>
+                        <TextBox x:Name="HermesServiceUrlBox" Margin="0,6,0,0" Padding="8" MaxLength="2048"
+                                 Background="#090D12" Foreground="#C6D6E5" BorderBrush="{StaticResource Border}"
+                                 AutomationProperties.Name="Hermes 服务 URL 与端口"/>
+                        <TextBlock Text="Profile（可选，留空使用服务默认）" Margin="0,10,0,0"/>
+                        <TextBox x:Name="HermesProfileBox" Margin="0,6,0,0" Padding="8" MaxLength="128"
+                                 Background="#090D12" Foreground="#C6D6E5" BorderBrush="{StaticResource Border}"/>
+                        <TextBlock Text="Hermes 服务账号" Margin="0,10,0,0"/>
+                        <TextBox x:Name="HermesUsernameBox" Margin="0,6,0,0" Padding="8" MaxLength="256"
+                                 Background="#090D12" Foreground="#C6D6E5" BorderBrush="{StaticResource Border}"
+                                 AutomationProperties.Name="Hermes 服务账号"/>
+                        <TextBlock Text="账号密码（仅用于本次登录，不保存）" Margin="0,10,0,0"/>
+                        <PasswordBox x:Name="HermesPasswordBox" Margin="0,6,0,0" Padding="8" MaxLength="8192"
+                                     Background="#090D12" Foreground="#C6D6E5" BorderBrush="{StaticResource Border}"
+                                     AutomationProperties.Name="Hermes 服务账号密码（不保存）"/>
+                        <WrapPanel Margin="0,12,0,0">
+                            <Button x:Name="LoginHermesButton" Content="登录" Click="LoginHermes_Click"/>
+                            <Button x:Name="LogoutHermesButton" Content="退出" Click="LogoutHermes_Click"/>
+                        </WrapPanel>
+                        <TextBlock x:Name="HermesAuthStateText" Margin="0,10,0,0" TextWrapping="Wrap" Foreground="{StaticResource Cyan}"/>
+                        <TextBlock x:Name="HermesAuthFeedbackText" Margin="0,8,0,0" TextWrapping="Wrap" Foreground="{StaticResource Muted}"/>
+                        <Expander x:Name="HermesAdvancedTokenExpander" Header="高级：访问令牌（可选）" IsExpanded="False"
+                                  Margin="0,16,0,0" Foreground="#E8F4FF" FontFamily="{StaticResource PixelFont}">
+                            <StackPanel Margin="0,10,0,0">
+                                <TextBlock Text="兼容已有访问令牌（Authorization: Bearer）；不是模型供应商 API Key。通常请使用上方账号登录。" TextWrapping="Wrap" Foreground="{StaticResource Muted}"/>
+                                <PasswordBox x:Name="HermesAccessTokenBox" Margin="0,8,0,0" Padding="8" MaxLength="8192"
+                                             Background="#090D12" Foreground="#C6D6E5" BorderBrush="{StaticResource Border}"
+                                             AutomationProperties.Name="Hermes 访问令牌（仅 DPAPI 加密保存）"/>
+                                <TextBlock x:Name="HermesTokenStateText" Margin="0,6,0,0" Foreground="{StaticResource Muted}" TextWrapping="Wrap"/>
+                                <TextBlock Margin="0,8,0,0" Foreground="{StaticResource Muted}" TextWrapping="Wrap"
+                                           Text="令牌仅在本机当前 Windows 用户的 DPAPI 文件中保存；切换服务 URL/Profile 不会沿用旧令牌。留空保留同一来源令牌；清空 URL 并保存可停用统计连接。"/>
+                                <CheckBox x:Name="ClearHermesTokenCheckBox" Margin="0,10,0,0" Content="保存时清除已存令牌"/>
+                                <CheckBox x:Name="HermesAnonymousCheckBox" Margin="0,10,0,0" Content="明确允许不带令牌访问（仅限服务已允许匿名访问）"/>
+                                <Button x:Name="SaveHermesSourceButton" Content="保存 Hermes 连接" HorizontalAlignment="Left" Margin="0,10,0,0" Click="SaveHermesSource_Click"/>
+                                <TextBlock x:Name="HermesConnectionFeedbackText" Margin="0,8,0,0" TextWrapping="Wrap" Foreground="{StaticResource Muted}"/>
+                            </StackPanel>
+                        </Expander>
+                        <TextBlock x:Name="NativeHermesStatusText" Margin="0,10,0,0" TextWrapping="Wrap" Foreground="{StaticResource Cyan}"/>
+                        <TextBlock Margin="0,8,0,22" TextWrapping="Wrap" Foreground="{StaticResource Muted}"
+                                   Text="原生统计限制：日图仅主模型且按会话开始日归属；范围总量含可用的 aux 辅助模型。cache-write 与 reasoning effort 未提供；缺失价格不表示免费。会话状态与历史统计为独立连接。"/>
+                        <TextBlock Text="PC 会话状态 · Hermes Desktop 插件（可选）" FontSize="18" FontWeight="Bold"
+                                   Foreground="{StaticResource Cyan}"/>
+                        <Border Margin="0,18,0,0" Padding="18" Background="#090D12"
+                                BorderBrush="{StaticResource Border}" BorderThickness="1">
+                            <StackPanel>
+                                <TextBlock x:Name="HermesStatusText" Foreground="{StaticResource Cyan}" FontWeight="Bold"/>
+                                <TextBlock x:Name="HermesLastSeenText" Margin="0,8,0,0" Foreground="{StaticResource Muted}"/>
+                                <TextBlock x:Name="HermesPluginUpdateText" Margin="0,10,0,0" TextWrapping="Wrap" Foreground="{StaticResource Muted}"/>
+                                <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Foreground="{StaticResource Muted}"
+                                           Text="启动时仅自动更新已安装且经完整内容校验的官方 Desktop 状态脚本，先备份再原子替换；相同内容不重写，自定义脚本不覆盖。原启用/禁用状态不变，未安装者不会自动安装；这不是新增 NAS 插件。更新后若尚未生效，请在 Hermes 命令面板执行 Reload desktop plugins；禁用者仍需自行决定是否启用。"/>
+                                <TextBlock Margin="0,14,0,0" Text="插件位置"/>
+                                <TextBox x:Name="HermesPluginPath" Margin="0,5,0,0" Padding="6" IsReadOnly="True"
+                                         TextWrapping="Wrap" Background="#090D12" Foreground="#C6D6E5"
+                                         BorderBrush="{StaticResource Border}"/>
+                                <TextBlock Margin="0,14,0,0" Foreground="{StaticResource Muted}" TextWrapping="Wrap"
+                                           Text="此插件只同步 PC 会话状态，与上方用量统计和账号登录独立。仅在运行 Hermes Desktop 的当前电脑安装，不在 NAS 安装。安装后，在 Hermes Desktop 的「能力 → 插件」启用 AgentPager 状态同步；列表未刷新时可用命令面板重新加载桌面插件。"/>
+                                <TextBlock Margin="0,8,0,0" Foreground="{StaticResource Muted}" TextWrapping="Wrap"
+                                           Text="Hermes Desktop 与 Bridge 必须在同一台电脑上；插件走本机连接，无需填 IP。手机使用「连接」页的局域网地址。换电脑请在新电脑安装插件；局域网地址变化时，请用新的二维码重新配对。"/>
+                                <Button Margin="0,16,0,0" HorizontalAlignment="Left" Content="手动安装 / 更新 Desktop 状态脚本"
+                                        Click="InstallHermesPlugin_Click"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="设置">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="24">
+                        <TextBlock Text="Windows 启动与日志" FontSize="18" FontWeight="Bold"
+                                   Foreground="{StaticResource Cyan}"/>
+                        <CheckBox x:Name="StartupCheckBox" Content="登录 Windows 时自动启动 AgentPager"
+                                  Margin="0,18,0,0" Click="StartupCheckBox_Changed"/>
+                        <TextBlock x:Name="StartupStatusText" Margin="0,8,0,0" TextWrapping="Wrap"
+                                   Foreground="{StaticResource Muted}"/>
+                        <TextBlock Margin="0,6,0,18" Foreground="{StaticResource Muted}" TextWrapping="Wrap"
+                                   Text="仅对当前 Windows 用户生效，登录后后台运行；不需要管理员权限。程序启动时不会改写登录启动项。要切换 EXE 路径，请先退出旧版，打开新版，再在此勾选。"/>
+                        <TextBlock x:Name="LegacyStartupWarningText" Margin="0,0,0,8" TextWrapping="Wrap" Foreground="#FFBD69"/>
+                        <Button x:Name="DisableLegacyWebStartupButton" Content="停用旧网页监控自启动" HorizontalAlignment="Left"
+                                Margin="0,0,0,8" Click="DisableLegacyWebStartup_Click" IsEnabled="False"/>
+                        <TextBlock Margin="0,0,0,18" Foreground="{StaticResource Muted}" TextWrapping="Wrap"
+                                   Text="只检测已知旧版 AgentPager 网页监控启动快捷方式；点击后备份并停用，不删除文件。不会自动停用，也不影响当前 Bridge 的内置网页监控。"/>
+                        <TextBlock Text="日志保存目录"/>
+                        <TextBox x:Name="LogDirectoryTextBox" Margin="0,8,0,0" Padding="8" MinHeight="34"
+                                 Background="#090D12" Foreground="#C6D6E5" BorderBrush="{StaticResource Border}"
+                                 AutomationProperties.Name="日志保存目录（完整路径）"
+                                 ToolTip="输入完整的绝对目录路径，点击应用后立即用于新日志"/>
+                        <WrapPanel x:Name="LogDirectoryButtons" Margin="0,10,0,0">
+                            <Button Content="浏览…" Click="BrowseLogs_Click" Margin="0,0,8,8"/>
+                            <Button Content="应用目录" Click="ApplyLogs_Click" Margin="0,0,8,8"/>
+                            <Button Content="恢复默认" Click="ResetLogs_Click" Margin="0,0,8,8"/>
+                            <Button Content="打开当前日志" Click="OpenLogs_Click" Margin="0,0,8,8"/>
+                        </WrapPanel>
+                        <TextBlock x:Name="ActiveLogDirectoryText" Margin="0,6,0,0" TextWrapping="Wrap"
+                                   Foreground="{StaticResource Cyan}"/>
+                        <TextBlock x:Name="DefaultLogDirectoryText" Margin="0,6,0,0" TextWrapping="Wrap"
+                                   Foreground="{StaticResource Muted}"/>
+                        <TextBlock x:Name="LogDirectoryErrorText" Margin="0,8,0,0" TextWrapping="Wrap" Foreground="#FF5D72"/>
+                        <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Foreground="{StaticResource Muted}"
+                                   Text="更改只影响新日志；旧日志保留原位，不移动、不删除。目录不可用时暂写默认目录，并保留自定义设置；恢复后自动重试。数据和配对信息仍保存在原数据目录。"/>
+                        <TextBlock x:Name="SettingsFeedbackText" Margin="0,10,0,0" TextWrapping="Wrap"
+                                   Foreground="{StaticResource Cyan}"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
         </TabControl>
 
         <Border Grid.Row="4" Padding="11,8" Background="{StaticResource Surface}"
                 BorderBrush="{StaticResource Border}" BorderThickness="1">
             <DockPanel>
                 <Button DockPanel.Dock="Right" Content="打开日志目录" Margin="12,0,0,0" Click="OpenLogs_Click"/>
-                <TextBlock x:Name="DiagnosticText" VerticalAlignment="Center" Foreground="{StaticResource Muted}"
-                           TextTrimming="CharacterEllipsis"/>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock x:Name="DiagnosticText" Foreground="{StaticResource Muted}" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock x:Name="FooterLogDirectoryText" Margin="0,3,0,0" Foreground="{StaticResource Muted}"
+                               TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
+                </StackPanel>
             </DockPanel>
         </Border>
     </Grid>

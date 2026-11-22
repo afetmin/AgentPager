@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Platform-only regression runner: no additional test dependencies. -->
+    <instrumentation
+        android:name="com.agentgrid.mobile.DedicatedModeRegressionTest"
+        android:targetPackage="${agentPagerTargetPackage}"
+        android:label="Dedicated mode regression tests" />
+</manifest>

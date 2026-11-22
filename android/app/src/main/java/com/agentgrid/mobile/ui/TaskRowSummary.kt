@@ -5,10 +5,12 @@ import com.agentgrid.mobile.domain.AgentLifecycle
 import com.agentgrid.mobile.domain.TaskSnapshot
 
 internal fun shouldShowTokenSummary(task: TaskSnapshot): Boolean =
-    task.lifecycle == AgentLifecycle.SUCCEEDED
+    task.lifecycle == AgentLifecycle.SUCCEEDED && !task.hasActiveDelegation
 
 internal fun taskStatusText(task: TaskSnapshot): String =
-    if (task.lifecycle == AgentLifecycle.RUNNING) {
+    if (task.hasActiveDelegation) {
+        "子代理工作中 · ${task.activeSubagents} 个"
+    } else if (task.lifecycle == AgentLifecycle.RUNNING) {
         activityStatusText(task.activity)
     } else {
         lifecycleStatusText(task.lifecycle)

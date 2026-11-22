@@ -1,0 +1,13 @@
+{
+  "name": "agentpager-chatgpt-web-monitor-tests",
+  "private": true,
+  "version": "0.2.0",
+  "scripts": {
+    "test": "node --test monitor.test.cjs",
+    "check": "node --check ../content.js && node --check ../background.js"
+  },
+  "devDependencies": {
+    "jsdom": "26.1.0",
+    "ws": "8.23.0"
+  }
+}

@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/AgentPager.Core/AgentPager.Core.csproj" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <Compile Include="../../src/AgentPager.Bridge/BridgeRuntime.cs;../../src/AgentPager.Bridge/BridgeRuntime.HermesAuth.cs;../../src/AgentPager.Bridge/ChatGPTWebMonitorHost.cs;../../src/AgentPager.Bridge/HookTcpServer.cs;../../src/AgentPager.Bridge/LanBridgeServer.cs;../../src/AgentPager.Bridge/PhoneTlsIdentity.cs;../../src/AgentPager.Bridge/HermesPluginSetup.cs;../../src/AgentPager.Bridge/HermesStatusEndpoint.cs" Link="Bridge/%(Filename)%(Extension)" />
+    <Compile Include="../../../tools/ChatGPTWebMonitor/ChatGPTWebStatusTracker.cs" Link="ChatGPTWebStatusTracker.cs" />
+    <EmbeddedResource Include="../../../hermes/plugin.js" LogicalName="AgentPager.Bridge.HermesPlugin.js" />
+    <EmbeddedResource Include="../HermesStatusSmoke/Fixtures/LegacyPlugin.js" LogicalName="AgentPager.Tests.LegacyPlugin.js" />
+    <Compile Include="../HermesStatusSmoke/HermesPluginUpgradeTests.cs" Link="HermesPluginUpgradeTests.cs" />
+    <Compile Include="../../src/AgentPager.Bridge/WindowsIntegration.cs" Link="WindowsIntegration.cs" />
+    <Compile Include="../../src/AgentPager.Bridge/StartupUpgrade.cs" Link="StartupUpgrade.cs" />
+  </ItemGroup>
+</Project>

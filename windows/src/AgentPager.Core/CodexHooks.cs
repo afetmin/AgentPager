@@ -12,6 +12,8 @@ public enum CodexHookEventName
     PostToolUse,
     UserPromptSubmit,
     Stop,
+    SessionMetadata,
+    SessionOffline,
 }
 
 public sealed record HookToolInput(
@@ -47,10 +49,18 @@ public sealed record CodexHookPayload(
     [property: JsonPropertyName("tool_use_id")] string? ToolUseID,
     [property: JsonPropertyName("tool_input")] HookToolInput? ToolInput,
     string? Prompt,
-    string? Model)
+    string? Model,
+    [property: JsonPropertyName("conversation_title")] string? ConversationTitle = null,
+    [property: JsonPropertyName("previous_session_id")] string? PreviousSessionID = null)
 {
+    public static bool IsChatGPTWebID(string? id) => id is not null &&
+        System.Text.RegularExpressions.Regex.IsMatch(id, @"\Aagentpager-chatgpt-web-[0-9a-f]{64}\z");
+
     [JsonIgnore]
-    public string ProjectName => Path.GetFileName(Cwd.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)) is { Length: > 0 } value
+    public bool IsChatGPTWeb => IsChatGPTWebID(SessionID);
+
+    [JsonIgnore]
+    public string ProjectName => Cwd.TrimEnd('/', '\\').Split('/', '\\').LastOrDefault() is { Length: > 0 } value
         ? value
         : "Codex";
 }

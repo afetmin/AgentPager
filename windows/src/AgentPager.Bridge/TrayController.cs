@@ -12,6 +12,8 @@ public sealed class TrayController : IDisposable
     private readonly ToolStripMenuItem _server;
     private readonly ToolStripMenuItem _hook;
     private readonly ToolStripMenuItem _link;
+    private readonly ToolStripMenuItem _webStatus;
+    private readonly ToolStripMenuItem _webToggle;
     private readonly Icon _ownedIcon;
 
     public TrayController(BridgeRuntime runtime, Action showWindow, Action exit)
@@ -21,9 +23,12 @@ public sealed class TrayController : IDisposable
         _server = new() { Enabled = false };
         _hook = new() { Enabled = false };
         _link = new() { Enabled = false };
+        _webStatus = new() { Enabled = false };
+        _webToggle = new("启用 ChatGPT 网页监控", null,
+            (_, _) => _runtime.SetWebMonitorEnabled(!_runtime.State.WebMonitor.Enabled));
         var menu = new ContextMenuStrip();
         menu.Items.AddRange([
-            _server, _hook, _link,
+            _server, _hook, _link, _webStatus, _webToggle,
             new ToolStripSeparator(),
             new ToolStripMenuItem("安装或修复 Codex Hook", null, (_, _) => _runtime.InstallHook()),
             new ToolStripMenuItem("安装或修复 Claude Code Hook", null, (_, _) => _runtime.InstallClaudeHook()),
@@ -48,7 +53,9 @@ public sealed class TrayController : IDisposable
         _server.Text = $"SERVER  {state.ServiceStatus}";
         _hook.Text = $"HOOK    {(state.HookInstalled ? "READY" : "OFF")}";
         _link.Text = $"LINK    {(state.PhoneCount > 0 ? $"{state.PhoneCount} PHONE" : "WAIT")}";
-        _icon.Text = state.PhoneCount > 0 ? $"AgentPager · {state.PhoneCount} 台手机" : "AgentPager Bridge";
+        _webStatus.Text = $"WEB  {MainWindow.WebStatusLabel(state.WebMonitor)}";
+        _webToggle.Checked = state.WebMonitor.Enabled;
+        _icon.Text = $"AgentPager · {state.PhoneCount} 手机 · WEB {MainWindow.WebStatusLabel(state.WebMonitor)}";
     }
 
     private static Icon LoadIcon()

@@ -24,7 +24,10 @@ internal object UsagePresentation {
     fun totalTokens(points: List<DailyUsagePoint>): Long =
         points.sumOf { it.totalTokens }
 
-    fun totalEstimatedCostUSD(points: List<DailyUsagePoint>): Double? {
+    fun totalEstimatedCostUSD(points: List<DailyUsagePoint>, isPartial: Boolean = false): Double? {
+        // A sum from only readable rollouts is not a complete cost estimate.
+        if (isPartial) return null
+        if (points.any { it.totalTokens > 0 && (it.estimatedCostUSD == null || !it.estimatedCostUSD.isFinite() || it.estimatedCostUSD < 0) }) return null
         val costs = points.mapNotNull { it.estimatedCostUSD }
         return costs.takeIf { it.isNotEmpty() }?.sum()
     }

@@ -1,0 +1,6 @@
+bin/
+obj/
+tests/bin/
+tests/obj/
+__pycache__/
+*.log

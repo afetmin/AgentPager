@@ -21,16 +21,22 @@ public static class Program
         if (args.Contains("--uninstall-hook", StringComparer.OrdinalIgnoreCase))
             return Maintenance.Uninstall();
 
+        var background = args.Contains("--background", StringComparer.OrdinalIgnoreCase);
+        // Launches never rewrite the Run entry; a user can update it in Settings
+        // after exiting the old instance and opening the intended executable.
         using var mutex = new Mutex(true, MutexName, out var created);
         if (!created)
         {
             SingleInstanceSignal.Send();
+            if (!background && StartupRegistration.OtherRunningExecutable() is { } previous)
+                System.Windows.MessageBox.Show($"当前已有另一路径的 AgentPager 正在运行：\n{previous}\n\n本次新版没有启动。请从托盘退出旧实例，再运行当前程序。不会同时启动两个 Bridge。",
+                    "AgentPager 版本切换提醒",MessageBoxButton.OK,MessageBoxImage.Information);
             return 0;
         }
 
         var app = new App(
             args.Contains("--first-run", StringComparer.OrdinalIgnoreCase),
-            args.Contains("--background", StringComparer.OrdinalIgnoreCase));
+            background);
         return app.Run();
     }
 }

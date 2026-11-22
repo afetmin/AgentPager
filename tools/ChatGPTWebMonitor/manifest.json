@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "AgentPager ChatGPT Web Status",
+  "version": "0.4.3",
+  "action": { "default_title": "AgentPager 网页监测", "default_popup": "popup.html", "default_icon": "icon.png" },
+  "icons": { "128": "icon.png" },
+  "minimum_chrome_version": "120",
+  "description": "Polls per-conversation ChatGPT sidebar spinners and reports stable session status to the local AgentPager bridge.",
+  "permissions": ["storage", "alarms"],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*",
+    "http://127.0.0.1:49363/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

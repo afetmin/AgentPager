@@ -15,6 +15,8 @@
 
 AgentPager 将 Codex Desktop、Codex CLI 与 Claude Code 的运行状态通过局域网实时同步到旧 Android 手机。把手机横放在桌面上，它就会变成一个常亮、安静，又能在关键时刻提醒你的 Agent 控制台。
 
+> **AgentPager 扩展版**：基于 `afetmin/AgentPager` 的非官方 GPL-3.0 修改版。新增 Hermes Desktop 和 ChatGPT 网页状态监测的桌面端仅支持 Windows；上游 macOS 源码保持不变。安装、变更与对应源码说明见 [简体中文](docs/RELEASE.zh-CN.md) · [English](docs/RELEASE.en.md)。下方的原版下载不包含扩展功能。
+
 ## 查看效果
 
 <p align="center"><img src="artifacts/agentpager-intro.gif" width="720" alt="AgentPager 介绍视频"></p>
@@ -52,6 +54,7 @@ AgentPager 将 Codex Desktop、Codex CLI 与 Claude Code 的运行状态通过�
 | --- | --- | --- |
 | Codex Desktop / CLI | 支持 | 支持批准或拒绝权限请求 |
 | Claude Code | 支持 | 暂不支持 |
+| Hermes Desktop（Windows） | 工作中、空闲、离线 | 只读 |
 
 ## 下载
 
@@ -82,6 +85,21 @@ AgentPager 将 Codex Desktop、Codex CLI 与 Claude Code 的运行状态通过�
 7. 新建一个 Codex 或 Claude Code 任务，手机会自动显示它的实时状态。
 
 Windows 首版支持原生 Codex（PowerShell 环境），暂不支持 Codex 运行在 WSL2 中。
+
+### 接入 Hermes Desktop
+
+1. 使用包含本功能的 AgentPager Bridge 和 Android App；上面的旧版下载不包含此功能。Bridge 和 Hermes Desktop 需要在同一台电脑运行。
+2. **Windows**：在 Bridge 的 **HERMES** 页点「安装或修复 Hermes 插件」。页面会显示实际路径、连接状态和最近收到状态的时间。不需要手动复制 `plugin.js`，也兼容没有 `ctx.files` 的桌面版。
+
+3. 在 Hermes Desktop 的「能力 → 插件」启用 **AgentPager 状态同步**，然后按原流程配对手机。不需要配置 Codex 或 Claude Hook。
+
+手机按 Hermes Desktop 的活动会话分别显示标题和状态，不导入历史会话。插件通过经过认证的本机接口报告状态、标题和子代理计数，不同步聊天正文。此扩展版不提供 macOS Bridge 构建；原项目的 macOS 源码不受影响。
+
+### 接入 ChatGPT 网页（Windows）
+
+仅启动 `AgentPagerBridge.exe`。如运行过旧的 `AgentPagerChatGPTWebBridge.exe`，请先退出它以释放端口。Chrome/Edge 加载新版 `ChatGPTWebMonitor` 扩展后刷新 ChatGPT 页面；在 Bridge 的 **CHATGPT WEB** 页或系统托盘菜单查看连接、启停监控。详细安装与诊断见 [网页监测说明](tools/ChatGPTWebMonitor/README.md)。
+
+修复 Android 退出专用模式后按钮仍显示「退出专用模式」的问题。现在退出后立即显示「进入专用模式」，不用重启就能重新进入，并保留上次选择。
 
 ## 当前可用的手机控制
 
@@ -161,6 +179,7 @@ That is how AgentPager came to be: putting an idle phone back to work as a genui
 | --- | --- | --- |
 | Codex Desktop / CLI | Supported | Approve or reject permission requests |
 | Claude Code | Supported | Not yet supported |
+| Hermes Desktop (Windows) | Working, idle, offline | Read-only |
 
 ## Download
 
@@ -188,6 +207,19 @@ Download the installer for your platform:
 5. Open **AgentPager Settings > Connection** to display the pairing QR code.
 6. Open AgentPager on your phone and scan the QR code.
 7. Create a Codex or Claude Code task. Its live status will automatically appear on your phone.
+
+### Connect Hermes Desktop
+
+1. Use an AgentPager Bridge and Android app built from a revision that includes this feature; the older downloads above do not include it. Run the bridge and Hermes Desktop on the same computer.
+2. **Windows:** Open the bridge's **HERMES** tab and click the install/repair button. It shows the plugin path, connection state, and last heartbeat. It also supports native desktop builds without `ctx.files`.
+
+3. Enable **AgentPager 状态同步** in **Capabilities → Plugins** and pair the phone as usual. No Codex or Claude Hook is required.
+
+The phone shows a separate title and status for each live Hermes Desktop session, without importing history. The desktop plugin uses an authenticated loopback-only endpoint and does not export chat content. This extension release does not ship a macOS Bridge build; upstream macOS source is unchanged.
+
+### Connect ChatGPT Web (Windows)
+
+Run only `AgentPagerBridge.exe` and stop any legacy `AgentPagerChatGPTWebBridge.exe` first. Load the matching `ChatGPTWebMonitor` extension in Chrome or Edge and refresh ChatGPT. The **CHATGPT WEB** tab and tray menu show whether monitoring is enabled and connected. See the [web monitor guide](tools/ChatGPTWebMonitor/README.md).
 
 The first Windows release supports native Codex running with PowerShell; Codex running inside WSL2 is not yet supported.
 

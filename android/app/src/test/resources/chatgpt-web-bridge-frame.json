@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "messageId": "5281b788-9209-4967-b96d-eeb7307538ca",
+  "type": "state.snapshot",
+  "sentAt": 1795176557673,
+  "payload": {
+    "tasks": [
+      {
+        "id": "agentpager-chatgpt-web-b454f82c5857ebabf342b7258e5cf7def78b7cd975814119462973de9a38df10",
+        "source": "codexDesktop",
+        "projectName": "ChatGPT Chat",
+        "title": "Fixture Beta",
+        "subagents": [],
+        "lifecycle": "running",
+        "activity": "thinking",
+        "startedAt": 1795176557670,
+        "updatedAt": 1795176557670,
+        "isUnread": false,
+        "isPinned": false,
+        "isMuted": false,
+        "capabilities": []
+      },
+      {
+        "id": "agentpager-chatgpt-web-bd7662a5eeb41614e720d477abfcb2272e19a8a70a93b7e3bc8560d44ad326e9",
+        "source": "codexDesktop",
+        "projectName": "ChatGPT Work",
+        "title": "Fixture Alpha",
+        "subagents": [],
+        "lifecycle": "succeeded",
+        "startedAt": 1795176552802,
+        "updatedAt": 1795176557476,
+        "completedAt": 1795176557476,
+        "isUnread": true,
+        "isPinned": false,
+        "isMuted": false,
+        "capabilities": []
+      }
+    ],
+    "focusedTaskID": "agentpager-chatgpt-web-bd7662a5eeb41614e720d477abfcb2272e19a8a70a93b7e3bc8560d44ad326e9",
+    "pendingRequests": []
+  }
+}
