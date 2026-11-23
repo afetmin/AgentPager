@@ -54,6 +54,9 @@ public struct ClaudeHookPayload: Codable, Equatable, Sendable {
     public var agentID: String?
     public var agentType: String?
     public var taskDescription: String?
+    /// 具体客户端的 `AgentIntegration.id`（如 zcode、workbuddy）；`nil` 表示 Claude Code 本身。
+    /// 不来自客户端载荷，由 Hook 命令行的 `--agent` 经信封传入，因此不参与编解码。
+    public var integrationID: String?
 
     private enum CodingKeys: String, CodingKey {
         case cwd
@@ -207,12 +210,29 @@ public enum ClaudeHookInstaller {
         "\(shellQuote(binaryPath)) --source claude"
     }
 
-    public static func install(existingData: Data?, command: String) throws -> HookFileMutation {
+    public typealias EventSpec = (name: String, matcher: String?, timeout: Int?)
+
+    /// 兼容客户端（`AgentIntegration`）使用自己的事件集合与状态文案安装同一种 Hook 结构。
+    public static func install(
+        existingData: Data?,
+        command: String,
+        statusLineBinaryPath: String? = nil,
+        events: [EventSpec]? = nil,
+        statusMessage: String? = nil
+    ) throws -> HookFileMutation {
+        let events = events ?? hookEvents
+        let statusMessage = statusMessage ?? managedStatusMessage
         var root = try rootObject(existingData)
+        if let statusLineBinaryPath {
+            root["statusLine"] = ClaudeStatusLineInstaller.installed(
+                replacing: root["statusLine"],
+                binaryPath: statusLineBinaryPath
+            )
+        }
         var hooks = root["hooks"] as? [String: Any] ?? [:]
 
         // 先清理任何已存在的 AgentPager 管理项，保证幂等替换而非叠加。
-        for spec in hookEvents {
+        for spec in events {
             let groups = (hooks[spec.name] as? [[String: Any]] ?? [])
                 .filter { !isManaged($0) }
             if groups.isEmpty {
@@ -222,10 +242,12 @@ public enum ClaudeHookInstaller {
             }
         }
 
-        for spec in hookEvents {
+        for spec in events {
             let groups = (hooks[spec.name] as? [[String: Any]] ?? [])
                 .filter { !isManaged($0) }
-            hooks[spec.name] = groups + [managedGroup(spec: spec, command: command)]
+            hooks[spec.name] = groups + [
+                managedGroup(spec: spec, command: command, statusMessage: statusMessage),
+            ]
         }
 
         root["hooks"] = hooks
@@ -237,7 +259,11 @@ public enum ClaudeHookInstaller {
         )
     }
 
-    public static func uninstall(existingData: Data?) throws -> HookFileMutation {
+    public static func uninstall(
+        existingData: Data?,
+        events: [EventSpec]? = nil
+    ) throws -> HookFileMutation {
+        let events = events ?? hookEvents
         guard let existingData else {
             return HookFileMutation(contents: nil, changed: false, hasRemainingHooks: false)
         }
@@ -245,14 +271,24 @@ public enum ClaudeHookInstaller {
         var hooks = root["hooks"] as? [String: Any] ?? [:]
         var changed = false
 
-        for spec in hookEvents {
-            let groups = hooks[spec.name] as? [[String: Any]] ?? []
+        if ClaudeStatusLineInstaller.isManaged(root["statusLine"]) {
+            if let original = ClaudeStatusLineInstaller.restored(from: root["statusLine"]) {
+                root["statusLine"] = original
+            } else {
+                root.removeValue(forKey: "statusLine")
+            }
+            changed = true
+        }
+
+        // 同时清理配置里任何事件下遗留的管理项（旧版本可能装过现在已不再使用的事件）。
+        for name in Set(events.map(\.name)).union(hooks.keys) {
+            guard let groups = hooks[name] as? [[String: Any]] else { continue }
             let remaining = groups.filter { !isManaged($0) }
             changed = changed || remaining.count != groups.count
             if remaining.isEmpty {
-                hooks.removeValue(forKey: spec.name)
+                hooks.removeValue(forKey: name)
             } else {
-                hooks[spec.name] = remaining
+                hooks[name] = remaining
             }
         }
 
@@ -277,24 +313,31 @@ public enum ClaudeHookInstaller {
         )
     }
 
-    public static func isInstalled(data: Data?) -> Bool {
+    /// 额度捕获用的 statusLine 是否已由 AgentPager 接管。
+    public static func isStatusLineInstalled(data: Data?) -> Bool {
+        guard let root = try? rootObject(data) else { return false }
+        return ClaudeStatusLineInstaller.isManaged(root["statusLine"])
+    }
+
+    public static func isInstalled(data: Data?, events: [EventSpec]? = nil) -> Bool {
         guard let root = try? rootObject(data),
               let hooks = root["hooks"] as? [String: Any] else {
             return false
         }
-        return hookEvents.allSatisfy { spec in
+        return (events ?? hookEvents).allSatisfy { spec in
             (hooks[spec.name] as? [[String: Any]] ?? []).contains(where: isManaged)
         }
     }
 
     private static func managedGroup(
         spec: (name: String, matcher: String?, timeout: Int?),
-        command: String
+        command: String,
+        statusMessage: String
     ) -> [String: Any] {
         var hook: [String: Any] = [
             "type": "command",
             "command": command,
-            "statusMessage": managedStatusMessage,
+            "statusMessage": statusMessage,
         ]
         if let timeout = spec.timeout {
             hook["timeout"] = timeout
@@ -337,6 +380,84 @@ public enum ClaudeHookInstaller {
             withJSONObject: object,
             options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         )
+    }
+
+    private static func shellQuote(_ value: String) -> String {
+        guard !value.isEmpty else { return "''" }
+        return "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
+    }
+}
+
+/// 管理 `settings.json` 顶层的 `statusLine`，用来捕获订阅额度。
+///
+/// Claude Code 的订阅额度（5 小时 / 7 天窗口）只通过 statusLine 命令的 stdin 提供。
+/// AgentPager 把自己的 `--claude-statusline` 命令设为 statusLine：先落盘额度，再把
+/// 用户原有的 statusLine 命令（编码在 `--chain` 参数里）原样转发，因此用户的状态栏
+/// 外观不变，卸载时也能无损还原。
+public enum ClaudeStatusLineInstaller {
+    private static let chainFlag = "--chain"
+
+    public static func command(for binaryPath: String, original: [String: Any]? = nil) -> String {
+        var command = "\(shellQuote(binaryPath)) --claude-statusline"
+        if let original,
+           let data = try? JSONSerialization.data(
+            withJSONObject: original,
+            options: [.sortedKeys, .withoutEscapingSlashes]
+           ) {
+            command += " \(chainFlag) \(data.base64EncodedString())"
+        }
+        return command
+    }
+
+    public static func isManaged(_ statusLine: Any?) -> Bool {
+        guard let object = statusLine as? [String: Any],
+              let command = object["command"] as? String else {
+            return false
+        }
+        return command.contains("--claude-statusline")
+            && (command.contains("AgentPagerHooks") || command.contains("AgentGridHooks"))
+    }
+
+    /// 从 AgentPager 管理的 statusLine 命令里还原用户原有的 statusLine 配置。
+    public static func original(fromManaged statusLine: Any?) -> [String: Any]? {
+        guard isManaged(statusLine),
+              let command = (statusLine as? [String: Any])?["command"] as? String else {
+            return nil
+        }
+        return original(fromCommand: command)
+    }
+
+    public static func original(fromCommand command: String) -> [String: Any]? {
+        let tokens = command.split(separator: " ").map(String.init)
+        guard let index = tokens.firstIndex(of: chainFlag),
+              tokens.indices.contains(index + 1),
+              let data = Data(base64Encoded: tokens[index + 1]),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return nil
+        }
+        return object
+    }
+
+    /// 返回写入后的 `statusLine`：保留用户原配置的 padding 等字段，仅替换 command。
+    static func installed(replacing existing: Any?, binaryPath: String) -> [String: Any] {
+        let original: [String: Any]?
+        if isManaged(existing) {
+            original = Self.original(fromManaged: existing)
+        } else {
+            original = existing as? [String: Any]
+        }
+        var result = original ?? [:]
+        // 原有配置必须是 command 类型才能被转发；其它类型无法链接，直接沿用 AgentPager 的。
+        let chainable = original?["type"] as? String == "command"
+            && original?["command"] is String
+        result["type"] = "command"
+        result["command"] = command(for: binaryPath, original: chainable ? original : nil)
+        return result
+    }
+
+    /// 还原：有原配置则恢复，没有则移除 statusLine。
+    static func restored(from existing: Any?) -> [String: Any]? {
+        original(fromManaged: existing)
     }
 
     private static func shellQuote(_ value: String) -> String {

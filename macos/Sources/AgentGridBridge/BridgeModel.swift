@@ -7,30 +7,63 @@ import Observation
 final class BridgeModel {
     private(set) var tasks: [TaskSnapshot] = []
     private(set) var usage: UsageSnapshot?
+    private(set) var claudeUsage: UsageSnapshot?
     private(set) var focusedTaskID: String?
     private(set) var phoneCount = 0
     private(set) var serviceStatus = "正在启动"
     private(set) var hookInstalled = false
     private(set) var claudeHookInstalled = false
+    /// Claude 订阅额度捕获（statusLine）是否已接管；旧版只装了 Hook 时为 false。
+    private(set) var claudeStatusLineInstalled = false
+    /// 是否允许用 Claude Code 登录凭据查询订阅额度（默认开启，可随时关闭）。
+    private(set) var claudeOAuthQuotaEnabled = ClaudeOAuthUsage.isEnabled
     private(set) var lastError: String?
+    /// Hook 安装/卸载错误单独保存：成功操作只清除自己的错误，不会误清服务启动错误。
+    private(set) var codexHookError: String?
+    private(set) var claudeHookError: String?
     private(set) var pairingText = ""
     private(set) var recentEvents: [String] = []
+    /// 其他兼容客户端（ZCode、WorkBuddy 等）的 Hook 状态，按 `AgentIntegration.id` 索引。
+    private(set) var integrationStatuses: [String: IntegrationStatus] = [:]
+
+    struct IntegrationStatus: Equatable {
+        var detected = false
+        var installed = false
+        /// 已写入但客户端的总开关被用户关闭，Hook 不会运行。
+        var dormant = false
+        var error: String?
+    }
 
     private var catalog = PersistentTaskCatalog()
     private var replayGuard = ReplayGuard()
     private var pairingSecret = Data()
-    private let hookConfiguration = CodexHookConfiguration()
-    private let claudeHookConfiguration = ClaudeHookConfiguration()
+    private let hookConfiguration: CodexHookConfiguration
+    private let claudeHookConfiguration: ClaudeHookConfiguration
+    private let integrationHome: URL
     private var rolloutObservation = CodexRolloutObservation()
     private var claudeTranscriptObservation = ClaudeTranscriptObservation()
     private var hookServer: HookBridgeServer?
     private var webSocketServer: WebSocketServer?
     private var refreshTask: Task<Void, Never>?
     private var usageLoadTask: Task<Void, Never>?
+    private var lastClaudeCaptureModifiedAt: Date?
     private var rolloutTask: Task<Void, Never>?
     private var sessionReconciliationTask: Task<Void, Never>?
+    private var pairingTextBox = PairingTextBox("")
+    private var pairingServiceID = ""
+    private var nextPairingRefresh = Date.distantPast
     private var hasStarted = false
     private var nextSessionReconciliation = Date.distantPast
+
+    init(
+        hookConfiguration: CodexHookConfiguration = CodexHookConfiguration(),
+        claudeHookConfiguration: ClaudeHookConfiguration = ClaudeHookConfiguration(),
+        integrationHome: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) {
+        self.hookConfiguration = hookConfiguration
+        self.claudeHookConfiguration = claudeHookConfiguration
+        self.integrationHome = integrationHome
+    }
 
     func start() {
         guard !hasStarted else { return }
@@ -38,17 +71,14 @@ final class BridgeModel {
 
         do {
             pairingSecret = try PairingSecretStore.loadOrCreate()
-            let payload = PairingPayload(
-                serviceID: "agentgrid-\(Host.current().localizedName ?? "mac")",
+            pairingServiceID = "agentgrid-\(Host.current().localizedName ?? "mac")"
+            pairingText = PairingText.make(
+                serviceID: pairingServiceID,
                 host: LocalNetworkAddress.preferredIPv4(),
-                port: 49_362,
-                secret: pairingSecret.base64EncodedString()
+                secret: pairingSecret
             )
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.sortedKeys]
-            let pairingPayloadText =
-                String(data: try encoder.encode(payload), encoding: .utf8) ?? ""
-            pairingText = pairingPayloadText
+            let pairingTextBox = PairingTextBox(pairingText)
+            self.pairingTextBox = pairingTextBox
 
             let hookServer = HookBridgeServer { [weak self] envelope in
                 Task { @MainActor in
@@ -77,10 +107,10 @@ final class BridgeModel {
                     }
                 },
                 localHTTPHandler: { path in
-                    path == "/pairing" ? pairingPayloadText : nil
+                    path == "/pairing" ? pairingTextBox.value : nil
                 }
             )
-            try webSocketServer.start()
+            try webSocketServer.start(serviceID: pairingServiceID)
             self.webSocketServer = webSocketServer
             serviceStatus = "局域网服务运行中"
         } catch {
@@ -90,6 +120,7 @@ final class BridgeModel {
 
         refreshHookStatus()
         refreshClaudeHookStatus()
+        refreshIntegrationStatuses()
         refreshUsage()
         handleRolloutObservation()
         publishCatalog()
@@ -108,6 +139,8 @@ final class BridgeModel {
                 try? await Task.sleep(for: .milliseconds(750))
                 guard let self else { return }
                 self.handleRolloutObservation()
+                self.refreshClaudeQuotaIfNeeded()
+                self.refreshPairingTextIfDue()
                 if let commit = self.catalog.maintain() {
                     self.applyCatalogCommit(commit)
                 }
@@ -115,17 +148,99 @@ final class BridgeModel {
         }
     }
 
+    /// 网络切换（Wi-Fi/有线/热点）后 IP 会变，二维码和 `/pairing` 必须跟随，否则手机扫到旧地址。
+    func refreshPairingText() {
+        guard !pairingSecret.isEmpty, !pairingServiceID.isEmpty else { return }
+        let text = PairingText.make(
+            serviceID: pairingServiceID,
+            host: LocalNetworkAddress.preferredIPv4(),
+            secret: pairingSecret
+        )
+        guard text != pairingText else { return }
+        pairingText = text
+        pairingTextBox.value = text
+    }
+
+    private func refreshPairingTextIfDue(now: Date = .now) {
+        guard now >= nextPairingRefresh else { return }
+        nextPairingRefresh = now.addingTimeInterval(10)
+        refreshPairingText()
+    }
+
+    /// 界面出现时刷新：用户可能在 App 外手动改过 ~/.codex 或 ~/.claude 配置。
+    func refreshHookStatuses() {
+        refreshHookStatus()
+        refreshClaudeHookStatus()
+        refreshIntegrationStatuses()
+    }
+
+    func installIntegration(id: String) {
+        guard let integration = AgentIntegrations.integration(id: id) else { return }
+        let configuration = AgentIntegrationConfiguration(
+            integration: integration,
+            home: integrationHome
+        )
+        do {
+            let change = try configuration.install(binaryPath: hookExecutableURL.path)
+            addEvent(change.changed
+                ? "\(integration.displayName) Hook 已安装"
+                : "\(integration.displayName) Hook 已是最新")
+            refreshIntegrationStatus(integration)
+        } catch {
+            refreshIntegrationStatus(integration)
+            integrationStatuses[id, default: IntegrationStatus()].error =
+                "安装 \(integration.displayName) Hook 失败：\(error.localizedDescription)"
+        }
+    }
+
+    func uninstallIntegration(id: String) {
+        guard let integration = AgentIntegrations.integration(id: id) else { return }
+        let configuration = AgentIntegrationConfiguration(
+            integration: integration,
+            home: integrationHome
+        )
+        do {
+            let change = try configuration.uninstall()
+            if change.changed {
+                addEvent("AgentPager \(integration.displayName) Hook 已移除")
+            }
+            refreshIntegrationStatus(integration)
+        } catch {
+            refreshIntegrationStatus(integration)
+            integrationStatuses[id, default: IntegrationStatus()].error =
+                "卸载 \(integration.displayName) Hook 失败：\(error.localizedDescription)"
+        }
+    }
+
+    func refreshIntegrationStatuses() {
+        for integration in AgentIntegrations.all {
+            refreshIntegrationStatus(integration)
+        }
+    }
+
+    private func refreshIntegrationStatus(_ integration: AgentIntegration) {
+        let configuration = AgentIntegrationConfiguration(
+            integration: integration,
+            home: integrationHome
+        )
+        integrationStatuses[integration.id] = IntegrationStatus(
+            detected: configuration.isClientDetected(),
+            installed: configuration.isInstalled(),
+            dormant: configuration.isDormant()
+        )
+    }
+
     func installHooks() {
         do {
             let change = try hookConfiguration.install(
                 command: hookExecutableURL.path
             )
-            if change.changed {
-                addEvent("Codex Hook 已安装")
-            }
+            addEvent(change.changed ? "Codex Hook 已安装" : "Codex Hook 已是最新")
+            codexHookError = nil
             refreshHookStatus()
         } catch {
-            lastError = "安装 Hook 失败：\(error.localizedDescription)"
+            codexHookError = "安装 Hook 失败：\(error.localizedDescription)"
+            refreshHookStatus()
         }
     }
 
@@ -135,23 +250,34 @@ final class BridgeModel {
             if change.changed {
                 addEvent("AgentPager Codex Hook 已移除")
             }
+            codexHookError = nil
             refreshHookStatus()
         } catch {
-            lastError = "卸载 Hook 失败：\(error.localizedDescription)"
+            codexHookError = "卸载 Hook 失败：\(error.localizedDescription)"
+            refreshHookStatus()
         }
     }
 
     func installClaudeHooks() {
         do {
             let command = ClaudeHookInstaller.hookCommand(for: hookExecutableURL.path)
-            let change = try claudeHookConfiguration.install(command: command)
-            if change.changed {
-                addEvent("Claude Code Hook 已安装")
-            }
+            let change = try claudeHookConfiguration.install(
+                command: command,
+                statusLineBinaryPath: hookExecutableURL.path
+            )
+            addEvent(change.changed ? "Claude Code Hook 已安装" : "Claude Code Hook 已是最新")
+            claudeHookError = nil
             refreshClaudeHookStatus()
         } catch {
-            lastError = "安装 Claude Code Hook 失败：\(error.localizedDescription)"
+            claudeHookError = "安装 Claude Code Hook 失败：\(error.localizedDescription)"
+            refreshClaudeHookStatus()
         }
+    }
+
+    func setClaudeOAuthQuotaEnabled(_ enabled: Bool) {
+        ClaudeOAuthUsage.isEnabled = enabled
+        claudeOAuthQuotaEnabled = enabled
+        refreshUsage()
     }
 
     func uninstallClaudeHooks() {
@@ -160,9 +286,11 @@ final class BridgeModel {
             if change.changed {
                 addEvent("AgentPager Claude Code Hook 已移除")
             }
+            claudeHookError = nil
             refreshClaudeHookStatus()
         } catch {
-            lastError = "卸载 Claude Code Hook 失败：\(error.localizedDescription)"
+            claudeHookError = "卸载 Claude Code Hook 失败：\(error.localizedDescription)"
+            refreshClaudeHookStatus()
         }
     }
 
@@ -218,6 +346,16 @@ final class BridgeModel {
 
     func clearError() {
         lastError = nil
+        codexHookError = nil
+        claudeHookError = nil
+        for id in integrationStatuses.keys {
+            integrationStatuses[id]?.error = nil
+        }
+    }
+
+    /// 菜单与诊断页展示的当前错误（Hook 操作错误优先，其次服务/持久化错误）。
+    var displayedError: String? {
+        codexHookError ?? claudeHookError ?? lastError
     }
 
     private func handle(_ envelope: HookEnvelope) {
@@ -272,6 +410,7 @@ final class BridgeModel {
         let claudeCandidates = Set(
             catalog.projection().tasks.compactMap { task -> String? in
                 guard task.source == .claudeCode,
+                      task.agentName == nil,
                       task.lifecycle == .starting || task.lifecycle == .running else {
                     return nil
                 }
@@ -363,14 +502,31 @@ final class BridgeModel {
     private func refreshUsage() {
         guard usageLoadTask == nil else { return }
         usageLoadTask = Task { [weak self] in
-            let snapshot = await Task.detached(priority: .utility) {
-                CodexUsageLoader.load()
+            let (snapshot, claudeSnapshot) = await Task.detached(priority: .utility) {
+                (
+                    CodexUsageLoader.load(),
+                    ClaudeUsageLoader.load(remoteCapture: { ClaudeOAuthUsage.currentCapture(now: $0) })
+                )
             }.value
             guard let self else { return }
             self.usage = snapshot
+            self.claudeUsage = claudeSnapshot
             self.usageLoadTask = nil
             self.broadcastSnapshot()
         }
+    }
+
+    /// statusLine 捕获文件更新、或已显示的额度窗口到期时，及时重算 Claude 额度。
+    private func refreshClaudeQuotaIfNeeded() {
+        let modifiedAt = (try? ClaudeRateLimitStore.defaultURL
+            .resourceValues(forKeys: [.contentModificationDateKey]))?
+            .contentModificationDate
+        let windowExpired = claudeUsage?.windows.contains {
+            ($0.resetsAt ?? .distantFuture) <= .now
+        } == true
+        guard modifiedAt != lastClaudeCaptureModifiedAt || windowExpired else { return }
+        lastClaudeCaptureModifiedAt = modifiedAt
+        refreshUsage()
     }
 
     private func refreshHookStatus() {
@@ -379,6 +535,7 @@ final class BridgeModel {
 
     private func refreshClaudeHookStatus() {
         claudeHookInstalled = claudeHookConfiguration.isInstalled()
+        claudeStatusLineInstalled = claudeHookConfiguration.isStatusLineInstalled()
     }
 
     private func publishCatalog(focusedTaskIDOverride: String? = nil) {
@@ -402,6 +559,7 @@ final class BridgeModel {
         let payload = StateSnapshotPayload(
             tasks: tasks,
             usage: usage,
+            claudeUsage: claudeUsage,
             focusedTaskID: focusedTaskID,
             pendingRequests: catalog.projection().pendingRequests
         )

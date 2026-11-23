@@ -1,7 +1,7 @@
 import Foundation
 
-enum ToolStepSanitizer {
-    static func nestedToolNames(in source: String) -> [String] {
+public enum ToolStepSanitizer {
+    public static func nestedToolNames(in source: String) -> [String] {
         let pattern = #"(?<![A-Za-z0-9_$])tools\s*(?:\.\s*([A-Za-z_$][A-Za-z0-9_$]*)|\[\s*[\"']([^\"']+)[\"']\s*\])\s*\("#
         guard let expression = try? NSRegularExpression(pattern: pattern) else {
             return []
@@ -25,7 +25,7 @@ enum ToolStepSanitizer {
         }
     }
 
-    static func isTestCommand(_ value: String?) -> Bool {
+    public static func isTestCommand(_ value: String?) -> Bool {
         guard let value else {
             return false
         }
@@ -52,7 +52,7 @@ enum ToolStepSanitizer {
         }
     }
 
-    static func sanitizedForTransport(_ value: String?) -> String? {
+    public static func sanitizedForTransport(_ value: String?) -> String? {
         guard let value else {
             return nil
         }
@@ -78,7 +78,7 @@ enum ToolStepSanitizer {
         return normalized
     }
 
-    static func isApplyPatchTool(_ toolName: String?) -> Bool {
+    public static func isApplyPatchTool(_ toolName: String?) -> Bool {
         guard let toolName = toolName?.lowercased() else {
             return false
         }
@@ -87,7 +87,7 @@ enum ToolStepSanitizer {
             || toolName.hasSuffix("__apply_patch")
     }
 
-    static func isExecScriptTool(_ toolName: String?) -> Bool {
+    public static func isExecScriptTool(_ toolName: String?) -> Bool {
         guard let toolName = toolName?.lowercased() else {
             return false
         }
@@ -96,7 +96,7 @@ enum ToolStepSanitizer {
             || toolName.hasSuffix("__exec")
     }
 
-    static func patchTargetSummary(_ patch: String) -> String? {
+    public static func patchTargetSummary(_ patch: String) -> String? {
         let prefixes = [
             "*** Update File:",
             "*** Add File:",
@@ -124,7 +124,7 @@ enum ToolStepSanitizer {
         return path.isEmpty ? nil : clipped(path)
     }
 
-    static func javascriptStringArgument(
+    public static func javascriptStringArgument(
         named key: String,
         in source: String
     ) -> String? {

@@ -129,6 +129,9 @@ public struct SubagentSnapshot: Identifiable, Codable, Equatable, Sendable {
 public struct TaskSnapshot: Identifiable, Codable, Equatable, Sendable {
     public var id: String
     public var source: AgentSource
+    /// 兼容 Claude Code 协议的其他客户端（如 ZCode、WorkBuddy）的展示名。
+    /// 线上 `source` 仍报 `claudeCode`，旧版手机端忽略该字段；`nil` 表示 Claude Code 本身。
+    public var agentName: String?
     public var projectName: String
     public var title: String
     /// 最近一条用户消息，只存在内存和实时协议中，绝不写入任务快照文件。
@@ -165,10 +168,12 @@ public struct TaskSnapshot: Identifiable, Codable, Equatable, Sendable {
         isUnread: Bool = false,
         isPinned: Bool = false,
         isMuted: Bool = false,
-        capabilities: Set<TaskCapability> = []
+        capabilities: Set<TaskCapability> = [],
+        agentName: String? = nil
     ) {
         self.id = id
         self.source = source
+        self.agentName = agentName
         self.projectName = projectName
         self.title = title ?? projectName
         self.userPrompt = userPrompt

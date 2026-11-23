@@ -139,7 +139,10 @@ public struct TaskStore: Sendable {
         var changed = false
         for index in tasks.indices {
             let task = tasks[index]
+            // 兼容客户端（ZCode、WorkBuddy 等）的会话文件不在 ~/.claude/projects，
+            // 缺少 transcript 证据不代表已结束，不能按 Claude 的规则收敛。
             guard task.source == .claudeCode,
+                  task.agentName == nil,
                   task.lifecycle == .starting || task.lifecycle == .running else {
                 continue
             }

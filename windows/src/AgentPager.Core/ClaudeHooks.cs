@@ -30,6 +30,13 @@ public sealed record ClaudeHookPayload(
     [property: JsonPropertyName("agent_type")] string? AgentType = null,
     [property: JsonPropertyName("task_description")] string? TaskDescription = null)
 {
+    /// <summary>
+    /// 具体客户端的 <see cref="AgentIntegration.Id"/>（如 zcode、workbuddy）；null 表示 Claude Code 本身。
+    /// 不来自客户端载荷，由 Hook 命令行的 --agent 经信封传入，因此不参与序列化。
+    /// </summary>
+    [JsonIgnore]
+    public string? IntegrationID { get; init; }
+
     [JsonIgnore]
     public string ProjectName =>
         Path.GetFileName(Cwd.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)) is { Length: > 0 } value

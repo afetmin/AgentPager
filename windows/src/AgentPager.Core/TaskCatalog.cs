@@ -484,7 +484,13 @@ public static class ClaudeEventReducer
             AgentLifecycle.Starting, null,
             now, now, null,
             false, false, false, []);
-        task = task with { ProjectName = hook.ProjectName, UpdatedAt = now, CompletedAt = null };
+        task = task with
+        {
+            ProjectName = hook.ProjectName,
+            UpdatedAt = now,
+            CompletedAt = null,
+            AgentName = AgentIntegrations.DisplayNameFor(hook.IntegrationID),
+        };
 
         switch (hook.HookEventName)
         {

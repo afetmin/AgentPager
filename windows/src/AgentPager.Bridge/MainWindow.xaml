@@ -299,6 +299,18 @@
                                Text="Bridge 不在线时 Hook 自动放行，不会阻塞 Claude Code。"/>
                 </StackPanel>
             </TabItem>
+
+            <TabItem Header="OTHERS">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="28">
+                        <TextBlock Text="其他客户端 Hook" FontSize="18" FontWeight="Bold"
+                                   Foreground="{StaticResource Cyan}"/>
+                        <TextBlock Margin="0,12,0,0" Foreground="{StaticResource Muted}" TextWrapping="Wrap"
+                                   Text="兼容 Claude Code Hook 协议的客户端。只有检测到客户端已安装才能写入，改写前自动备份并保留你的既有 Hook。"/>
+                        <StackPanel x:Name="IntegrationList" Margin="0,18,0,0"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
         </TabControl>
 
         <Border Grid.Row="4" Padding="11,8" Background="{StaticResource Surface}"

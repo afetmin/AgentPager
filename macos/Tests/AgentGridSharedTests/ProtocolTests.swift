@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import AgentGridCore
+@testable import AgentGridShared
 
 @Test("控制消息签名可验证")
 func controlSignatureRoundTrip() throws {

@@ -26,6 +26,7 @@ public enum ClaudeEventReducer {
         )
 
         task.projectName = hook.projectName
+        task.agentName = AgentIntegrations.displayName(forAgentID: hook.integrationID)
         task.updatedAt = now
 
         switch hook.event {
@@ -89,10 +90,12 @@ public enum ClaudeEventReducer {
             )
             task.capabilities = [.approve, .deny]
         case .permissionDenied:
-            task.lifecycle = .interrupted
-            task.activity = nil
-            task.completedAt = now
-            task.isUnread = true
+            // Auto mode 分类器拒绝单次工具调用后，Claude 会收到拒绝结果并继续本轮，
+            // 真正结束仍由 Stop 报告。若在此判为终态，后续所有 Hook 都会被忽略，
+            // 手机上就会一直显示已结束。
+            task.lifecycle = .running
+            task.activity = .thinking
+            task.completedAt = nil
             task.capabilities = []
         case .notification:
             // 只有确实等待用户输入的通知才进入等待回答。

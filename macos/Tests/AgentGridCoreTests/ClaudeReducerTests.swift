@@ -476,3 +476,55 @@ func claudeQuestionToolHasWaitingLifecycle() {
     #expect(catalog.projection().tasks.first?.lifecycle == .running)
     #expect(catalog.projection().pendingRequests.isEmpty)
 }
+
+@Test("Claude PermissionDenied 只是单次工具被拒，本轮继续运行直到 Stop")
+func claudePermissionDeniedKeepsTurnRunning() {
+    let start = Date(timeIntervalSince1970: 4_000)
+    var task = ClaudeEventReducer.task(
+        from: ClaudeHookPayload(
+            cwd: "/tmp/agentpager",
+            hookEventName: "UserPromptSubmit",
+            sessionID: "claude-auto",
+            prompt: "测试"
+        ),
+        existing: nil,
+        now: start
+    )
+    task = ClaudeEventReducer.task(
+        from: ClaudeHookPayload(
+            cwd: "/tmp/agentpager",
+            hookEventName: "PermissionDenied",
+            sessionID: "claude-auto",
+            toolName: "Bash"
+        ),
+        existing: task,
+        now: start.addingTimeInterval(5)
+    )
+    #expect(task.lifecycle == .running)
+    #expect(task.completedAt == nil)
+
+    task = ClaudeEventReducer.task(
+        from: ClaudeHookPayload(
+            cwd: "/tmp/agentpager",
+            hookEventName: "PreToolUse",
+            sessionID: "claude-auto",
+            toolName: "Read",
+            toolInput: .object(["file_path": .string("/tmp/a")])
+        ),
+        existing: task,
+        now: start.addingTimeInterval(8)
+    )
+    #expect(task.lifecycle == .running)
+    #expect(task.latestStep?.contains("/tmp/a") == true)
+
+    task = ClaudeEventReducer.task(
+        from: ClaudeHookPayload(
+            cwd: "/tmp/agentpager",
+            hookEventName: "Stop",
+            sessionID: "claude-auto"
+        ),
+        existing: task,
+        now: start.addingTimeInterval(20)
+    )
+    #expect(task.lifecycle == .succeeded)
+}

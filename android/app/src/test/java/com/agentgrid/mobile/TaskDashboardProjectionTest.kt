@@ -33,6 +33,19 @@ class TaskDashboardProjectionTest {
     }
 
     @Test
+    fun `等待回答与等待批准同组置顶不会被运行中任务挤出`() {
+        val running = (1..6).map { task("run$it", AgentLifecycle.RUNNING, 100L + it) }
+        val answer = task("answer", AgentLifecycle.WAITING_ANSWER, 1)
+        val approval = task("approval", AgentLifecycle.WAITING_APPROVAL, 2)
+
+        val projection = project(running + answer + approval)
+
+        assertEquals(listOf("approval", "answer"), projection.orderedTasks.take(2).map { it.id })
+        assertTrue("answer" in projection.visibleTaskIDs)
+        assertEquals("approval", projection.urgentTaskID)
+    }
+
+    @Test
     fun `重复 ID 保留更新时间较新且同时间保留最后一个`() {
         val old = task("same", AgentLifecycle.RUNNING, 10)
         val newer = task("same", AgentLifecycle.RUNNING, 20)

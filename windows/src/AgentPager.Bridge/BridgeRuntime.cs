@@ -14,7 +14,16 @@ public sealed record BridgeViewState(
     string PairingText,
     string SelectedAddress,
     List<NetworkAddressOption> Networks,
-    int TaskCount);
+    int TaskCount,
+    IReadOnlyList<IntegrationViewState> Integrations);
+
+/// <summary>其他兼容客户端（ZCode、WorkBuddy 等）的 Hook 状态，供设置页展示。</summary>
+public sealed record IntegrationViewState(
+    AgentIntegration Integration,
+    bool Detected,
+    bool Installed,
+    bool Dormant,
+    string? Error);
 
 public sealed class BridgeRuntime : IAsyncDisposable
 {
@@ -35,6 +44,7 @@ public sealed class BridgeRuntime : IAsyncDisposable
     private readonly CodexUsageLoader _usageLoader = new();
     private readonly CodexHookConfiguration _hookConfiguration = new();
     private readonly ClaudeHookConfiguration _claudeHookConfiguration = new();
+    private readonly Dictionary<string, string> _integrationErrors = new();
     private readonly ReplayGuard _replayGuard = new();
     private readonly byte[] _pairingSecret;
     private readonly TaskCatalog _catalog;
@@ -160,6 +170,42 @@ public sealed class BridgeRuntime : IAsyncDisposable
         {
             _lastError = $"卸载 Claude Code Hook 失败：{error.Message}";
             _log.Write("ERROR", _lastError);
+        }
+        PublishState();
+    }
+
+    public void InstallIntegration(string id)
+    {
+        if (AgentIntegrations.Find(id) is not { } integration) return;
+        try
+        {
+            var result = new AgentIntegrationConfiguration(integration).Install(Environment.ProcessPath!);
+            _log.Write("INFO", result.Changed
+                ? $"{integration.DisplayName} Hook 已安装。"
+                : $"{integration.DisplayName} Hook 已是最新状态。");
+            _integrationErrors.Remove(id);
+        }
+        catch (Exception error)
+        {
+            _integrationErrors[id] = $"安装 {integration.DisplayName} Hook 失败：{error.Message}";
+            _log.Write("ERROR", _integrationErrors[id]);
+        }
+        PublishState();
+    }
+
+    public void UninstallIntegration(string id)
+    {
+        if (AgentIntegrations.Find(id) is not { } integration) return;
+        try
+        {
+            _ = new AgentIntegrationConfiguration(integration).Uninstall();
+            _integrationErrors.Remove(id);
+            _log.Write("INFO", $"{integration.DisplayName} Hook 已移除。");
+        }
+        catch (Exception error)
+        {
+            _integrationErrors[id] = $"卸载 {integration.DisplayName} Hook 失败：{error.Message}";
+            _log.Write("ERROR", _integrationErrors[id]);
         }
         PublishState();
     }
@@ -352,7 +398,17 @@ public sealed class BridgeRuntime : IAsyncDisposable
         PairingText(),
         _selectedAddress,
         _networks,
-        _catalog.Projection().Tasks.Count);
+        _catalog.Projection().Tasks.Count,
+        AgentIntegrations.All.Select(integration =>
+        {
+            var configuration = new AgentIntegrationConfiguration(integration);
+            return new IntegrationViewState(
+                integration,
+                configuration.IsClientDetected(),
+                configuration.IsInstalled(),
+                configuration.IsDormant(),
+                _integrationErrors.GetValueOrDefault(integration.Id));
+        }).ToList());
 
     private void PublishState()
     {

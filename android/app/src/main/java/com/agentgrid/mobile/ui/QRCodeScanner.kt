@@ -120,6 +120,8 @@ private fun CameraPreview(
                         if (result != null) {
                             completed = true
                             previewView.post { onResult(result) }
+                            // 扫到无效二维码时配对会失败并停留在本页；稍后允许重新扫描。
+                            previewView.postDelayed({ completed = false }, 2_500)
                         }
                     }
                 }

@@ -62,6 +62,10 @@ struct BridgeMenuView: View {
                 )
             }
 
+            if let error = model.displayedError {
+                ErrorBanner(message: error) { model.clearError() }
+            }
+
             PixelDivider()
 
             Button {
@@ -81,7 +85,8 @@ struct BridgeMenuView: View {
             Button {
                 model.installClaudeHooks()
             } label: {
-                Text(model.claudeHookInstalled ? "修复 CLAUDE CODE HOOK" : "安装 CLAUDE CODE HOOK")
+                Text(!model.claudeHookInstalled ? "安装 CLAUDE CODE HOOK"
+                    : model.claudeStatusLineInstalled ? "修复 CLAUDE CODE HOOK" : "更新 CLAUDE CODE HOOK（含额度）")
                     .contentTransition(.interpolate)
             }
             .buttonStyle(PixelButtonStyle(accent: PixelTheme.violet))
@@ -127,6 +132,8 @@ struct BridgeMenuView: View {
         .preferredColorScheme(.dark)
         .font(.pixel(12))
         .onAppear {
+            model.refreshHookStatuses()
+            model.refreshPairingText()
             resetMenuEntrance()
             DispatchQueue.main.async {
                 menuAppeared = true
@@ -178,7 +185,7 @@ struct BridgeMenuView: View {
 }
 
 struct BridgeSettingsView: View {
-    private enum Tab: String, CaseIterable {
+    enum Tab: String, CaseIterable {
         case pairing = "连接"
         case hook = "Hook"
         case simulator = "模拟器"
@@ -187,9 +194,14 @@ struct BridgeSettingsView: View {
 
     let model: BridgeModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var selection: Tab = .pairing
+    @State private var selection: Tab
     @State private var pairingTextCopied = false
     @Namespace private var tabSelection
+
+    init(model: BridgeModel, initialTab: Tab = .pairing) {
+        self.model = model
+        _selection = State(initialValue: initialTab)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -224,11 +236,13 @@ struct BridgeSettingsView: View {
                         .padding(.top, 14)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityAddTraits(selection == tab ? .isSelected : [])
                 }
             }
             // Hook 页内容较高时，不允许内容区压缩顶部 Tab 栏。
             .fixedSize(horizontal: false, vertical: true)
             .background(PixelTheme.surface)
+            .zIndex(1)
 
             ZStack {
                 switch selection {
@@ -242,13 +256,30 @@ struct BridgeSettingsView: View {
                     diagnosticsView.transition(tabContentTransition)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // 内容区高度只取剩余空间，超出部分由各页自己滚动，不能反向撑高/顶走 Tab 栏。
+            .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+            .clipped()
         }
         .frame(minWidth: 650, minHeight: 480)
         .background(PixelTheme.background)
         .foregroundStyle(PixelTheme.text)
         .font(.pixel(12))
         .preferredColorScheme(.dark)
+        .onAppear {
+            model.refreshHookStatuses()
+            model.refreshPairingText()
+        }
+        .onChange(of: model.pairingText) {
+            pairingTextCopied = false
+        }
+        .task(id: pairingTextCopied) {
+            // “已复制”只是短暂反馈，不应永久停留。
+            guard pairingTextCopied else { return }
+            try? await Task.sleep(for: .seconds(2))
+            if !Task.isCancelled {
+                pairingTextCopied = false
+            }
+        }
     }
 
     private var tabContentTransition: AnyTransition {
@@ -279,6 +310,13 @@ struct BridgeSettingsView: View {
                 SettingsTitle("扫描配对")
                 Text("左侧二维码就是配对码，用 Android AgentPager 扫描即可")
                     .foregroundStyle(PixelTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                if model.serviceStatus == "服务启动失败" {
+                    Text("局域网服务未启动，手机暂时无法连接，详情见“诊断”页。")
+                        .font(.pixel(10))
+                        .foregroundStyle(PixelTheme.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 PixelDivider()
                 VStack(alignment: .leading, spacing: 6) {
                     Text("配对文本（可直接选择）")
@@ -331,10 +369,18 @@ struct BridgeSettingsView: View {
     }
 
     private var hookView: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        // 内容高度超过最小窗口时需要滚动，否则会把顶部 Tab 栏挤出窗口。
+        ScrollView {
+            hookContent
+        }
+        .frame(minHeight: 0)
+    }
+
+    private var hookContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
             SettingsTitle("Agent 生命周期 Hook")
             PixelPanel {
-                VStack(alignment: .leading, spacing: 13) {
+                VStack(alignment: .leading, spacing: 10) {
                     Text("Codex")
                         .font(.pixel(13, weight: .bold))
                         .foregroundStyle(PixelTheme.cyan)
@@ -351,6 +397,10 @@ struct BridgeSettingsView: View {
                     Text("实时采集开始、工具、批准、完成和 Token；安装会保留现有 Hook，并在改写前备份。")
                         .foregroundStyle(PixelTheme.muted)
                         .lineSpacing(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let error = model.codexHookError {
+                        ErrorBanner(message: error)
+                    }
                     HStack(spacing: 10) {
                         Button("安装或修复") { model.installHooks() }
                             .buttonStyle(PixelButtonStyle(accent: PixelTheme.cyan))
@@ -361,7 +411,7 @@ struct BridgeSettingsView: View {
                 }
             }
             PixelPanel {
-                VStack(alignment: .leading, spacing: 13) {
+                VStack(alignment: .leading, spacing: 10) {
                     Text("Claude Code")
                         .font(.pixel(13, weight: .bold))
                         .foregroundStyle(PixelTheme.violet)
@@ -375,9 +425,18 @@ struct BridgeSettingsView: View {
                         .transition(hookStatusTransition)
                     }
                     .animation(hookStatusAnimation, value: model.claudeHookInstalled)
-                    Text("向 ~/.claude/settings.json 写入生命周期 Hook，覆盖开始、工具、权限、完成等事件；保留现有 Hook 并自动备份。")
+                    InfoRow(
+                        label: "QUOTA",
+                        value: model.claudeStatusLineInstalled ? "额度读取已启用" : "未启用",
+                        accent: model.claudeStatusLineInstalled ? PixelTheme.green : PixelTheme.amber
+                    )
+                    Text("向 ~/.claude/settings.json 写入生命周期 Hook，覆盖开始、工具、权限、完成等事件；保留现有 Hook 并自动备份。同时接管 statusLine 读取订阅额度（Claude Code CLI，Pro/Max），并原样转发你已有的状态栏命令，卸载时还原。")
                         .foregroundStyle(PixelTheme.muted)
                         .lineSpacing(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let error = model.claudeHookError {
+                        ErrorBanner(message: error)
+                    }
                     HStack(spacing: 10) {
                         Button("安装或修复") { model.installClaudeHooks() }
                             .buttonStyle(PixelButtonStyle(accent: PixelTheme.violet))
@@ -385,14 +444,42 @@ struct BridgeSettingsView: View {
                             .buttonStyle(PixelButtonStyle(accent: PixelTheme.red))
                             .disabled(!model.claudeHookInstalled)
                     }
+                    Text("另可读取 Claude Code 的登录凭据（钥匙串 Claude Code-credentials）直接查询额度：令牌只留在内存，只发往 api.anthropic.com 的只读额度接口；仅 Claude Code CLI 登录的账号可用。")
+                        .foregroundStyle(PixelTheme.muted)
+                        .lineSpacing(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button(model.claudeOAuthQuotaEnabled ? "关闭凭据查询额度" : "开启凭据查询额度") {
+                        model.setClaudeOAuthQuotaEnabled(!model.claudeOAuthQuotaEnabled)
+                    }
+                    .buttonStyle(PixelButtonStyle(accent: PixelTheme.amber))
+                }
+            }
+            PixelPanel {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("其他客户端")
+                        .font(.pixel(13, weight: .bold))
+                        .foregroundStyle(PixelTheme.cyan)
+                    Text("兼容 Claude Code Hook 协议的客户端。只有检测到客户端已安装才能写入，改写前自动备份并保留你的既有 Hook。")
+                        .foregroundStyle(PixelTheme.muted)
+                        .lineSpacing(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ForEach(AgentIntegrations.all) { integration in
+                        IntegrationRow(
+                            integration: integration,
+                            status: model.integrationStatuses[integration.id]
+                                ?? BridgeModel.IntegrationStatus(),
+                            install: { model.installIntegration(id: integration.id) },
+                            uninstall: { model.uninstallIntegration(id: integration.id) }
+                        )
+                    }
                 }
             }
             Text("Bridge 不在线时 Hook 自动放行，不会阻塞 Agent。")
                 .font(.pixel(10))
                 .foregroundStyle(PixelTheme.muted)
-            Spacer()
         }
-        .padding(28)
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     private var simulatorView: some View {
@@ -466,6 +553,13 @@ struct BridgeSettingsView: View {
                 .font(.pixel(12, weight: .bold))
                 .foregroundStyle(PixelTheme.cyan)
             ScrollView {
+                if model.recentEvents.isEmpty {
+                    Text("暂无事件")
+                        .font(.pixel(11))
+                        .foregroundStyle(PixelTheme.muted)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 8)
+                }
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(model.recentEvents.enumerated()), id: \.offset) { _, event in
                         Text(event)
@@ -478,13 +572,44 @@ struct BridgeSettingsView: View {
                 }
             }
             .background(PixelTheme.surface)
-            if let error = model.lastError {
-                Text(error)
-                    .font(.pixel(11))
-                    .foregroundStyle(PixelTheme.red)
+            if let error = model.displayedError {
+                ErrorBanner(message: error) { model.clearError() }
             }
         }
         .padding(28)
+    }
+}
+
+/// 可关闭的错误提示：错误必须可见，并且能在用户处理后清除。
+private struct ErrorBanner: View {
+    let message: String
+    var onDismiss: (() -> Void)?
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(message)
+                .font(.pixel(11))
+                .foregroundStyle(PixelTheme.red)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let onDismiss {
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(PixelTheme.muted)
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("关闭错误提示")
+            }
+        }
+        .padding(8)
+        .background(PixelTheme.red.opacity(0.1))
+        .overlay {
+            Rectangle().stroke(PixelTheme.red.opacity(0.5), lineWidth: 1)
+        }
     }
 }
 
@@ -516,6 +641,59 @@ private struct StatusCell: View {
         .scaleEffect(active ? 1 : 0.985)
         .animation(.spring(response: 0.28, dampingFraction: 0.84), value: active)
         .animation(.easeInOut(duration: 0.18), value: value)
+    }
+}
+
+private struct IntegrationRow: View {
+    let integration: AgentIntegration
+    let status: BridgeModel.IntegrationStatus
+    let install: () -> Void
+    let uninstall: () -> Void
+
+    private var statusText: String {
+        if !status.detected && !status.installed { return "未检测到客户端" }
+        if status.installed { return status.dormant ? "已写入，但客户端总开关已关闭" : "已安装" }
+        return "未安装"
+    }
+
+    private var statusAccent: Color {
+        if status.installed { return status.dormant ? PixelTheme.amber : PixelTheme.green }
+        return status.detected ? PixelTheme.amber : PixelTheme.muted
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            PixelDivider()
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(integration.displayName)
+                    .font(.pixel(12, weight: .bold))
+                    .foregroundStyle(PixelTheme.text)
+                Text(integration.verification == .officialDocs ? "依据官方文档" : "社区实现 · 未真机验证")
+                    .font(.pixel(9))
+                    .foregroundStyle(PixelTheme.muted)
+            }
+            InfoRow(label: "STATUS", value: statusText, accent: statusAccent)
+            Text("~/\(integration.configPath)")
+                .font(.pixel(10))
+                .foregroundStyle(PixelTheme.muted)
+            if let note = integration.note {
+                Text(note)
+                    .font(.pixel(10))
+                    .foregroundStyle(PixelTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let error = status.error {
+                ErrorBanner(message: error)
+            }
+            HStack(spacing: 10) {
+                Button(status.installed ? "修复" : "安装", action: install)
+                    .buttonStyle(PixelButtonStyle(accent: PixelTheme.cyan))
+                    .disabled(!status.detected)
+                Button("卸载", action: uninstall)
+                    .buttonStyle(PixelButtonStyle(accent: PixelTheme.red))
+                    .disabled(!status.installed)
+            }
+        }
     }
 }
 

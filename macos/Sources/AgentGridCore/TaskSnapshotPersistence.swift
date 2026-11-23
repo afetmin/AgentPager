@@ -4,6 +4,7 @@ public struct TaskSnapshotPersistence: Sendable {
     private struct StoredTask: Codable {
         var id: String
         var source: AgentSource
+        var agentName: String?
         var projectName: String
         var title: String
         var userPrompt: String?
@@ -21,6 +22,7 @@ public struct TaskSnapshotPersistence: Sendable {
         init(_ task: TaskSnapshot) {
             id = task.id
             source = task.source
+            agentName = task.agentName
             projectName = task.projectName
             title = task.title
             userPrompt = task.userPrompt
@@ -53,7 +55,8 @@ public struct TaskSnapshotPersistence: Sendable {
                 isUnread: isUnread,
                 isPinned: isPinned,
                 isMuted: isMuted,
-                capabilities: capabilities
+                capabilities: capabilities,
+                agentName: agentName
             )
         }
     }
@@ -87,7 +90,8 @@ public struct TaskSnapshotPersistence: Sendable {
         try encoder.encode(tasks.map(StoredTask.init)).write(to: fileURL, options: .atomic)
     }
 
-    public static var defaultFileURL: URL {
+    /// AgentPager 的 Application Support 目录（任务快照、额度捕获等共用）。
+    public static var defaultDirectory: URL {
         let applicationSupport =
             FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
                 .first
@@ -95,6 +99,9 @@ public struct TaskSnapshotPersistence: Sendable {
                 .appendingPathComponent("Library/Application Support")
         return applicationSupport
             .appendingPathComponent("AgentGrid", isDirectory: true)
-            .appendingPathComponent("tasks.json")
+    }
+
+    public static var defaultFileURL: URL {
+        defaultDirectory.appendingPathComponent("tasks.json")
     }
 }

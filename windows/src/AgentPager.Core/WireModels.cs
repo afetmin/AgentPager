@@ -59,7 +59,10 @@ public sealed record TaskSnapshot(
     bool IsUnread,
     bool IsPinned,
     bool IsMuted,
-    HashSet<TaskCapability> Capabilities)
+    HashSet<TaskCapability> Capabilities,
+    // 兼容 Claude Code 协议的其他客户端（如 ZCode、WorkBuddy）的展示名；Source 仍是 ClaudeCode。
+    // 旧版手机端忽略该字段；null 表示 Claude Code 本身。
+    string? AgentName = null)
 {
     [JsonIgnore]
     public bool IsTerminal => Lifecycle is AgentLifecycle.Succeeded or AgentLifecycle.Interrupted;

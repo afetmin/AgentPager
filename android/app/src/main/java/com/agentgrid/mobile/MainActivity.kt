@@ -19,8 +19,14 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        enterTerminalMode()
-        importPairing(intent)
+        // 用户退出专用模式后，重新启动不应再次隐藏系统栏并强制常亮。
+        if (viewModel.state.value.terminalMode) {
+            enterTerminalMode()
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        // 进程被回收后重建会带回原始 Intent，重复导入会无谓地重置已建立的连接。
+        if (savedInstanceState == null) importPairing(intent)
 
         setContent {
             val state by viewModel.state.collectAsStateWithLifecycle()

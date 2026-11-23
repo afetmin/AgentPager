@@ -125,11 +125,21 @@ public sealed class HookTcpServer(Func<HookEnvelope, Task> hookHandler, DailyFil
             HookSource.Codex => JsonSerializer.Deserialize<CodexHookPayload>(payloadNode, WireJson.Options) is { } codex
                 ? new HookEnvelope.Codex(codex)
                 : null,
-            HookSource.Claude => JsonSerializer.Deserialize<ClaudeHookPayload>(payloadNode, WireJson.Options) is { } claude
-                ? new HookEnvelope.Claude(claude)
-                : null,
+            HookSource.Claude => DecodeClaude(root, payloadNode),
             _ => null,
         };
+    }
+
+    private static HookEnvelope? DecodeClaude(JsonObject root, string payloadNode)
+    {
+        var agentID = root["agent_id"] is JsonValue value && value.TryGetValue<string>(out var id) ? id : null;
+        // 兼容客户端可能混用 camelCase 字段名，先补齐 snake_case 再解码。
+        var json = agentID is not null && root["payload"] is JsonObject payload
+            ? HookPayloadKeyNormalizer.SnakeCasedKeys(payload).ToJsonString()
+            : payloadNode;
+        return JsonSerializer.Deserialize<ClaudeHookPayload>(json, WireJson.Options) is { } claude
+            ? new HookEnvelope.Claude(claude with { IntegrationID = agentID })
+            : null;
     }
 
     private static HookEnvelope? TryDecodeCodex(string line)

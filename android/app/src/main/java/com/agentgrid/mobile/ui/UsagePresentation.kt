@@ -1,10 +1,13 @@
 package com.agentgrid.mobile.ui
 
 import com.agentgrid.mobile.domain.DailyUsagePoint
+import com.agentgrid.mobile.domain.UsageSnapshot
+import com.agentgrid.mobile.domain.UsageWindow
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlin.math.ceil
+import kotlin.math.roundToInt
 
 internal enum class UsageRange(
     val days: Int,
@@ -15,7 +18,85 @@ internal enum class UsageRange(
     NINETY_DAYS(90, "90 天"),
 }
 
+/** 额度所属的 Agent 提供方。 */
+internal enum class UsageProvider(
+    val displayName: String,
+    /** 顶栏小号额度条的前缀，必须足够短。 */
+    val shortName: String,
+) {
+    CODEX("Codex", "CDX"),
+    CLAUDE("Claude", "CLD"),
+}
+
+internal fun UsageProvider.pick(
+    codex: UsageSnapshot?,
+    claude: UsageSnapshot?,
+): UsageSnapshot? = when (this) {
+    UsageProvider.CODEX -> codex
+    UsageProvider.CLAUDE -> claude
+}
+
+/** 一个额度窗口在界面上的展示结果。`remaining == null` 表示未知或已过期。 */
+internal data class QuotaDisplay(
+    val label: String,
+    val remaining: Int?,
+    val expired: Boolean,
+    val missing: Boolean,
+)
+
 internal object UsagePresentation {
+    /** 订阅额度窗口：primary 为短窗口（5h），secondary 为长窗口（7d）。 */
+    fun pickWindows(windows: List<UsageWindow>): Pair<UsageWindow?, UsageWindow?> {
+        val secondary = windows.firstOrNull { it.key == "secondary" }
+        val primary = windows.firstOrNull { it.key == "primary" }
+            ?: windows.firstOrNull { it !== secondary }
+        return primary to secondary
+    }
+
+    /** 默认展示哪个提供方：优先有额度窗口的，其次有用量数据的，最后回退 Codex。 */
+    fun defaultProvider(codex: UsageSnapshot?, claude: UsageSnapshot?): UsageProvider = when {
+        codex?.windows?.isNotEmpty() == true -> UsageProvider.CODEX
+        claude?.windows?.isNotEmpty() == true -> UsageProvider.CLAUDE
+        codex?.dailyUsage?.isNotEmpty() == true -> UsageProvider.CODEX
+        claude?.dailyUsage?.isNotEmpty() == true -> UsageProvider.CLAUDE
+        else -> UsageProvider.CODEX
+    }
+
+    /** 重置时间已过去的窗口，其百分比是上一个周期的旧值，不能再当作当前额度展示。 */
+    fun isExpired(window: UsageWindow, now: Long = System.currentTimeMillis()): Boolean =
+        window.resetsAt?.let { it <= now } == true
+
+    fun display(
+        window: UsageWindow?,
+        fallbackLabel: String,
+        now: Long = System.currentTimeMillis(),
+    ): QuotaDisplay {
+        if (window == null) {
+            return QuotaDisplay(fallbackLabel, remaining = null, expired = false, missing = true)
+        }
+        val expired = isExpired(window, now)
+        val remaining = window.remainingPercentage
+            .takeIf { it.isFinite() && !expired }
+            ?.roundToInt()
+            ?.coerceIn(0, 100)
+        return QuotaDisplay(
+            label = window.label.ifBlank { fallbackLabel },
+            remaining = remaining,
+            expired = expired,
+            missing = false,
+        )
+    }
+
+    fun quotaResetText(
+        window: UsageWindow?,
+        now: Long = System.currentTimeMillis(),
+        zoneId: ZoneId = ZoneId.systemDefault(),
+    ): String = when {
+        window == null -> "暂无额度数据"
+        isExpired(window, now) -> "已重置 · 等待更新"
+        else -> resetText(window.resetsAt, now, zoneId)
+    }
+
     fun pointsForRange(
         points: List<DailyUsagePoint>,
         range: UsageRange,
