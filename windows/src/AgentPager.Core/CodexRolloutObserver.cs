@@ -11,18 +11,21 @@ public sealed class CodexRolloutObserver
         string cwd,
         long offset,
         string? subagentID = null,
-        string? subagentPath = null)
+        string? subagentPath = null,
+        DateTimeOffset? minimumEventTime = null)
     {
         public string Path { get; } = path;
         public string SessionID { get; } = sessionID;
         public string Cwd { get; } = cwd;
         public string? SubagentID { get; } = subagentID;
         public string? SubagentPath { get; } = subagentPath;
+        public DateTimeOffset? MinimumEventTime { get; } = minimumEventTime;
         public long Offset { get; set; } = offset;
         public byte[] Pending { get; set; } = [];
     }
 
     private readonly Dictionary<string, TrackedFile> _tracked = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, long>? _coldFileLengths;
     private readonly string _sessionsRoot;
     private DateTimeOffset _nextDiscovery = DateTimeOffset.MinValue;
 
@@ -75,7 +78,7 @@ public sealed class CodexRolloutObserver
                     {
                         var line = Encoding.UTF8.GetString(data, start, index - start);
                         var signal = ParseLine(line, tracked.SessionID, tracked.Cwd,
-                            tracked.SubagentID, tracked.SubagentPath, current);
+                            tracked.SubagentID, tracked.SubagentPath, current, tracked.MinimumEventTime);
                         if (signal is not null)
                         {
                             signals.Add(signal);
@@ -98,17 +101,32 @@ public sealed class CodexRolloutObserver
     private void Discover(DateTimeOffset modifiedAfter)
     {
         if (!Directory.Exists(_sessionsRoot)) return;
+        var coldFiles = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
         try
         {
-            foreach (var path in Directory.EnumerateFiles(_sessionsRoot, "*.jsonl", SearchOption.AllDirectories))
+            foreach (var info in new DirectoryInfo(_sessionsRoot).EnumerateFiles("*.jsonl", SearchOption.AllDirectories))
             {
-                if (_tracked.ContainsKey(Path.GetFullPath(path))) continue;
-                var info = new FileInfo(path);
-                if (info.LastWriteTimeUtc < modifiedAfter.UtcDateTime) continue;
+                var path = info.FullName;
+                if (_tracked.ContainsKey(path)) continue;
+                var oldWriteTime = info.LastWriteTimeUtc < modifiedAfter.UtcDateTime;
+                if (oldWriteTime)
+                {
+                    // Codex can append on Windows while the open writer still exposes the old mtime.
+                    // Baseline untouched logs, and also notice a restored JSONL that reappears with an old mtime.
+                    var length = info.Length;
+                    if (_coldFileLengths is null ||
+                        _coldFileLengths.TryGetValue(path, out var previous) && previous == length)
+                    {
+                        coldFiles[path] = length;
+                        continue;
+                    }
+                }
                 var metadata = ReadMetadata(path);
                 if (metadata is null) continue;
-                Track(path, metadata.Value.SessionID, metadata.Value.Cwd, readExisting: true, maximumReplayBytes: 2 * 1024 * 1024);
+                Track(path, metadata.Value.SessionID, metadata.Value.Cwd, readExisting: true,
+                    maximumReplayBytes: 2 * 1024 * 1024, minimumEventTime: oldWriteTime ? modifiedAfter : null);
             }
+            _coldFileLengths = coldFiles;
         }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
@@ -121,7 +139,8 @@ public sealed class CodexRolloutObserver
         bool readExisting,
         long? maximumReplayBytes = null,
         string? subagentID = null,
-        string? subagentPath = null)
+        string? subagentPath = null,
+        DateTimeOffset? minimumEventTime = null)
     {
         var fullPath = Path.GetFullPath(path);
         if (_tracked.ContainsKey(fullPath)) return;
@@ -129,7 +148,7 @@ public sealed class CodexRolloutObserver
         var offset = readExisting
             ? maximumReplayBytes is not null ? Math.Max(0, size - maximumReplayBytes.Value) : 0
             : size;
-        _tracked[fullPath] = new(fullPath, sessionID, cwd, offset, subagentID, subagentPath);
+        _tracked[fullPath] = new(fullPath, sessionID, cwd, offset, subagentID, subagentPath, minimumEventTime);
     }
 
     private void TrackSubagent(CodexRolloutSignal signal, string nearbyDirectory)
@@ -179,19 +198,24 @@ public sealed class CodexRolloutObserver
         string cwd,
         string? trackedSubagentID = null,
         string? trackedSubagentPath = null,
-        DateTimeOffset? now = null)
+        DateTimeOffset? now = null,
+        DateTimeOffset? minimumEventTime = null)
     {
         try
         {
             using var document = JsonDocument.Parse(line);
             var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return null;
             var rootType = root.GetStringOrNull("type");
             if (!root.TryGetProperty("payload", out var payload) ||
                 payload.ValueKind != JsonValueKind.Object)
                 return null;
             var type = payload.GetStringOrNull("type");
             if (type is null) return null;
-            var timestamp = ParseTimestamp(root.GetStringOrNull("timestamp")) ?? now ?? DateTimeOffset.UtcNow;
+            var recordedAt = ParseTimestamp(root.GetStringOrNull("timestamp"));
+            // Length changes discover a file, but only fresh dated events prove fresh work.
+            if (minimumEventTime is { } cutoff && (recordedAt is null || recordedAt.Value < cutoff)) return null;
+            var timestamp = recordedAt ?? now ?? DateTimeOffset.UtcNow;
 
             CodexRolloutSignal Signal(
                 AgentLifecycle? lifecycle,
