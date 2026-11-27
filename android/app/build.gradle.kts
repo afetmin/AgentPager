@@ -27,7 +27,7 @@ android {
             .orNull
             ?: "0.3.1"
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = "com.agentgrid.mobile.DedicatedModeRegressionTest"
     }
 
     buildFeatures {

@@ -136,7 +136,7 @@ fun AgentGridScreen(
     onControl: (String, ControlAction, String?) -> Unit,
     onFocus: (String) -> Unit,
     onToggleDashboard: () -> Unit,
-    onExitTerminal: () -> Unit,
+    onToggleTerminal: () -> Unit,
 ) {
     AgentGridTheme {
         AnimatedContent(
@@ -169,7 +169,7 @@ fun AgentGridScreen(
                     onControl = onControl,
                     onFocus = onFocus,
                     onToggleDashboard = onToggleDashboard,
-                    onExitTerminal = onExitTerminal,
+                    onToggleTerminal = onToggleTerminal,
                 )
             }
         }
@@ -221,16 +221,16 @@ private fun PairingScreen(
             )
             Spacer(Modifier.height(10.dp))
             Text(
-                if (canScan) "扫描 Mac 上的二维码" else "输入 Mac 端配对文本",
+                if (canScan) "扫描电脑上的二维码" else "输入电脑端配对文本",
                 color = AgentGridColors.Cyan,
                 fontSize = 16.sp,
             )
             Spacer(Modifier.height(8.dp))
             Text(
                 if (canScan) {
-                    "在 Mac 上打开 AgentGrid Bridge → 连接，\n扫描其中显示的二维码"
+                    "在电脑上打开 AgentPager Bridge → 连接，\n扫描其中显示的二维码"
                 } else {
-                    "此设备没有摄像头。在 Mac 上打开 AgentGrid Bridge → 连接，\n复制配对文本后在下方粘贴或输入"
+                    "此设备没有摄像头。在电脑上打开 AgentPager Bridge → 连接，\n复制配对文本后在下方粘贴或输入"
                 },
                 color = AgentGridColors.Muted,
                 fontSize = 12.sp,
@@ -241,7 +241,7 @@ private fun PairingScreen(
                 value = manualText,
                 onValueChange = { manualText = it },
                 label = {
-                    Text(if (canScan) "无法扫码？粘贴 Mac 端配对文本" else "Mac 端配对文本")
+                    Text(if (canScan) "无法扫码？粘贴电脑端配对文本" else "电脑端配对文本")
                 },
                 minLines = 3,
                 modifier = Modifier
@@ -289,7 +289,7 @@ private fun TaskTerminal(
     onControl: (String, ControlAction, String?) -> Unit,
     onFocus: (String) -> Unit,
     onToggleDashboard: () -> Unit,
-    onExitTerminal: () -> Unit,
+    onToggleTerminal: () -> Unit,
 ) {
     val projection = state.taskProjection
     val tasks = projection.orderedTasks
@@ -465,7 +465,7 @@ private fun TaskTerminal(
                     soundEnabled = enabled
                 },
                 onUnpair = onUnpair,
-                onExitTerminal = onExitTerminal,
+                onToggleTerminal = onToggleTerminal,
             )
         }
 
@@ -1098,7 +1098,7 @@ private fun SettingsPanel(
     soundEnabled: Boolean,
     onSoundEnabledChange: (Boolean) -> Unit,
     onUnpair: () -> Unit,
-    onExitTerminal: () -> Unit,
+    onToggleTerminal: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -1121,7 +1121,11 @@ private fun SettingsPanel(
             onSoundEnabledChange(!soundEnabled)
         }
         PixelButton("解除配对", AgentGridColors.Red, onUnpair)
-        PixelButton("退出专用模式", AgentGridColors.Muted, onExitTerminal)
+        PixelButton(
+            if (state.terminalMode) "退出专用模式" else "进入专用模式",
+            AgentGridColors.Muted,
+            onToggleTerminal,
+        )
     }
 }
 
